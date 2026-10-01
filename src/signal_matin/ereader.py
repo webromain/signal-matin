@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import re
 import uuid
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .models import DigestItem, MorningEdition, NewsItem, TaskItem
+from .models import BriefSource, DigestItem, MorningEdition, NewsItem, TaskItem, TechBrief
 from .pdf import _launch_browser
 
 
@@ -111,6 +112,99 @@ def _tasks(title: str, items: list[TaskItem]) -> str:
     return f"<section><h2>{_e(title)}</h2><ol>{''.join(rows)}</ol></section>"
 
 
+_BRIEF_REF = re.compile(r"\[(\d{1,2}(?:\s*[,;]\s*\d{1,2})*)\]")
+
+
+def _brief_text(text: str, sources: dict[int, BriefSource]) -> str:
+    """Echappe le texte ; [3] devient le nom du media, cliquable sur la liseuse."""
+    def media(match: re.Match) -> str:
+        ids: list[int] = []
+        for value in re.split(r"\s*[,;]\s*", match.group(1)):
+            if int(value) in sources and int(value) not in ids:
+                ids.append(int(value))
+        labels = [
+            f'<a href="{_e(str(sources[i].url))}">{_e(sources[i].name)}</a>'
+            if sources[i].url else _e(sources[i].name)
+            for i in ids
+        ]
+        return f'<span class="meta">({" · ".join(labels)})</span>' if labels else ""
+    return _BRIEF_REF.sub(media, _e(text))
+
+
+def _brief(brief: TechBrief) -> str:
+    sources = {source.id: source for source in brief.sources}
+
+    def paragraphs(text: str) -> str:
+        return "".join(
+            f"<p>{_brief_text(part, sources)}</p>" for part in text.split("\n") if part.strip()
+        )
+
+    def bullets(rows: list[str]) -> str:
+        return "<ul>" + "".join(f"<li>{_brief_text(row, sources)}</li>" for row in rows) + "</ul>"
+
+    parts = [f"<section><h2>{_e(brief.title)}</h2>"]
+    if brief.essentials:
+        rows = "".join(f"<li>{_brief_text(line, sources)}</li>" for line in brief.essentials)
+        parts.append(f"<h3>L’essentiel en 5 lignes</h3><ol>{rows}</ol>")
+    parts.append("</section>")
+    if brief.facts:
+        facts = []
+        for fact in brief.facts:
+            source = sources.get(fact.source_id)
+            meta = ""
+            if source:
+                name = (f'<a href="{_e(str(source.url))}">{_e(source.name)}</a>'
+                        if source.url else _e(source.name))
+                date = (f" · {_e(_date_fr(source.published_at.astimezone().date()))}"
+                        if source.published_at else "")
+                meta = f'<p class="meta">{name}{date}</p>'
+            translation = f" ({_e(fact.translation)})" if fact.translation else ""
+            why = (f"<p><strong>Pourquoi c’est important.</strong> {_brief_text(fact.why, sources)}</p>"
+                   if fact.why else "")
+            facts.append(
+                f'<article class="article"><p>{_brief_text(fact.fact, sources)}</p>'
+                f"<blockquote><p>« {_e(fact.quote)} »{translation}</p></blockquote>{meta}{why}</article>"
+            )
+        parts.append("<section><h2>Les informations du jour</h2>" + "".join(facts) + "</section>")
+    for analysis in brief.analyses:
+        confidence = (f'<p class="meta">Confiance : {_e(analysis.confidence)}</p>'
+                      if analysis.confidence else "")
+        blocks = "".join(
+            f"<h3>{label}</h3>{paragraphs(text)}"
+            for label, text in (
+                ("Les faits", analysis.facts),
+                ("Le contexte", analysis.context),
+                ("Enjeux géopolitiques", analysis.geopolitics),
+                ("Enjeux économiques", analysis.economics),
+                ("Qui y gagne, qui y perd", analysis.stakes),
+                ("Lectures divergentes", analysis.readings),
+                ("Ce qui reste incertain", analysis.uncertain),
+            ) if text
+        )
+        parts.append(
+            f'<section class="article"><h2>Analyse · {_e(analysis.subject)}</h2>{confidence}{blocks}</section>'
+        )
+    if brief.threads:
+        rows = [
+            f"{thread.text} ({'établi par les sources' if thread.established else 'interprétation'})"
+            for thread in brief.threads
+        ]
+        parts.append(f"<section><h2>Fil rouge</h2>{bullets(rows)}</section>")
+    critique = "".join(
+        f"<h3>{label}</h3>{bullets(rows)}"
+        for label, rows in (
+            ("Questions à se poser", brief.questions),
+            ("Biais et angles morts de la couverture", brief.blind_spots),
+            ("À surveiller", brief.watch),
+        ) if rows
+    )
+    if critique:
+        parts.append(f"<section><h2>Pour exercer mon esprit critique</h2>{critique}</section>")
+    if brief.unknowns:
+        parts.append(f"<section><h2>Ce que je n’ai pas pu établir</h2>{bullets(brief.unknowns)}</section>")
+    return "".join(parts)
+
+
 def _chapters(edition: MorningEdition) -> list[EreaderChapter]:
     chapters: list[EreaderChapter] = []
     meta = edition.edition
@@ -176,11 +270,14 @@ def _chapters(edition: MorningEdition) -> list[EreaderChapter]:
             _news_collection(news_items),
         ))
 
-    tech_body = _news_collection(edition.tech_news)
-    if not tech_body:
-        tech_body = "".join(_digest(item) for item in edition.tech)
-    if tech_body:
-        chapters.append(EreaderChapter("tech", "Technologie & IA", tech_body))
+    if edition.tech_brief:
+        chapters.append(EreaderChapter("tech", "Brief Tech & IA", _brief(edition.tech_brief)))
+    else:
+        tech_body = _news_collection(edition.tech_news)
+        if not tech_body:
+            tech_body = "".join(_digest(item) for item in edition.tech)
+        if tech_body:
+            chapters.append(EreaderChapter("tech", "Technologie & IA", tech_body))
 
     curiosity = _news_collection(edition.curiosity_news)
     watch = "".join(_digest(item) for item in edition.watch)
