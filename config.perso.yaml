@@ -131,24 +131,30 @@ markets:
       symbols:
         - { symbol: "^FCHI", name: "CAC 40" }
         - { symbol: "^STOXX50E", name: "Euro Stoxx 50" }
+        - { symbol: "^GDAXI", name: "DAX" }
         - { symbol: "^GSPC", name: "S&P 500" }
         - { symbol: "^IXIC", name: "Nasdaq" }
     - name: "Actions & ETF"
       symbols:
         - { symbol: "HO.PA", name: "Thales", unit: "€" }
+        - { symbol: "MC.PA", name: "LVMH", unit: "€" }
         - { symbol: "NVDA", name: "Nvidia", unit: "$" }
+        - { symbol: "AAPL", name: "Apple", unit: "$" }
         - { symbol: "CW8.PA", name: "MSCI World", unit: "€" }
-    - name: "Taux & devises"
+    - name: "Devises"
       symbols:
-        - { symbol: "^TNX", name: "Taux US 10 ans", unit: "%" }
         - { symbol: "EURUSD=X", name: "Euro / dollar", decimals: 4 }
+        - { symbol: "EURGBP=X", name: "Euro / livre", decimals: 4 }
+        - { symbol: "GBPUSD=X", name: "Livre / dollar", decimals: 4 }
     - name: "Cryptos"
       symbols:
         - { symbol: "BTC-EUR", name: "Bitcoin", unit: "€" }
         - { symbol: "ETH-EUR", name: "Ethereum", unit: "€" }
+        - { symbol: "SOL-EUR", name: "Solana", unit: "€" }
     - name: "Matières premières"
       symbols:
         - { symbol: "GC=F", name: "Or (once)", unit: "$" }
+        - { symbol: "SI=F", name: "Argent (once)", unit: "$" }
         - { symbol: "BZ=F", name: "Pétrole Brent", unit: "$" }
 
 recommendations: []
@@ -156,8 +162,10 @@ personal:
   greeting: "Bonjour."
   note: ""
   free_window: ""
-  # Une citation différente chaque jour, prise à tour de rôle dans cette liste.
-  # Exemples à remplacer par les tiennes.
+  # Citation du jour lue dans ce flux RSS (« texte — auteur, source »).
+  quote_feed: "https://www.dicocitations.com/rss.xml"
+  # Secours si le flux est en panne ou si sa citation est trop longue pour le
+  # bandeau : une citation de cette liste, à tour de rôle.
   quotes:
     - text: "La simplicité est la sophistication suprême."
       author: "Attribué à Léonard de Vinci"
@@ -177,3 +185,10 @@ personal:
 printing:
   printer: ""
   duplex: true
+
+# `signal-matin generate` envoie le PDF dans cette conversation Telegram.
+# Le jeton du bot et l'identifiant du chat restent dans .env, jamais ici.
+telegram:
+  enabled: true
+  bot_token: "${TELEGRAM_BOT_TOKEN}"
+  chat_id: "${TELEGRAM_CHAT_ID}"

@@ -9,6 +9,7 @@
 #       sudo usermod -aG docker <utilisateur>    (puis se reconnecter)
 #   - l'image construite une première fois :  docker compose build
 #   - config.yaml, credentials.json et token.json présents dans le dossier du projet
+#   - .env avec TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID pour recevoir le PDF sur Telegram
 #   - l'heure du serveur réglée sur Paris, car cron suit l'heure du système :
 #       sudo timedatectl set-timezone Europe/Paris
 #

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .config import ROOT, setting
 from .connectors import (
-    collect_google_calendar, collect_ics, collect_markets, collect_rss,
+    collect_google_calendar, collect_ics, collect_markets, collect_quote, collect_rss,
     collect_tasks, enrich_articles,
     collect_weather,
 )
@@ -147,18 +147,25 @@ def build_live(
         _recommendations(setting(config, "recommendations", []) or [])
         if _enabled(config, "recommendations") else []
     )
-    # Une liste personal.quotes fait tourner une citation differente chaque jour.
-    quotes = [q for q in (setting(config, "personal.quotes", []) or []) if q]
-    chosen = (
-        quotes[now.date().toordinal() % len(quotes)] if quotes
-        else setting(config, "personal.quote", {}) or {}
-    )
-    if isinstance(chosen, str):
-        chosen = {"text": chosen}
-    quote_text = str(chosen.get("text") or "").strip()
-    quote = QuoteBlock(
-        text=quote_text[:420], author=str(chosen.get("author") or "")[:120],
-    ) if quote_text else None
+    # personal.quote_feed donne la citation du jour ; si le flux est en panne, la
+    # liste personal.quotes prend le relais, une citation differente chaque jour.
+    quote = None
+    quote_feed = str(setting(config, "personal.quote_feed", "") or "")
+    if quote_feed:
+        quote, quote_status = collect_quote(quote_feed, now)
+        statuses.append(quote_status)
+    if quote is None:
+        quotes = [q for q in (setting(config, "personal.quotes", []) or []) if q]
+        chosen = (
+            quotes[now.date().toordinal() % len(quotes)] if quotes
+            else setting(config, "personal.quote", {}) or {}
+        )
+        if isinstance(chosen, str):
+            chosen = {"text": chosen}
+        quote_text = str(chosen.get("text") or "").strip()
+        quote = QuoteBlock(
+            text=quote_text[:420], author=str(chosen.get("author") or "")[:120],
+        ) if quote_text else None
 
     date = now.date()
     edition = MorningEdition(

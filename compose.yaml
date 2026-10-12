@@ -10,6 +10,9 @@ services:
       TZ: Europe/Paris
       GOOGLE_CREDENTIALS_FILE: credentials.json
       GOOGLE_TOKEN_FILE: token.json
+      # Lus par Compose dans le fichier .env du dossier, absent de l'image.
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./output:/app/output

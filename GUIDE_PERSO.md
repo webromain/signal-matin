@@ -36,7 +36,8 @@ config.yaml  ->  connecteurs  ->  édition (JSON)  ->  mise en page HTML/CSS  ->
 ```
 
 1. **Les connecteurs** (`src/signal_matin/connectors/`) lisent les sources :
-   flux RSS, météo Open-Meteo, Google Agenda, cours de marché Yahoo Finance.
+   flux RSS, météo Open-Meteo, Google Agenda, cours de marché Yahoo Finance,
+   citation du jour (flux RSS de Dicocitations).
    Aucune clé d'API n'est nécessaire, sauf l'accès Google Agenda.
 2. **Le texte des articles** : les flux ne donnent qu'une à trois phrases. Le
    journal va donc lire le début de l'article sur le site du média quand celui-ci
@@ -58,7 +59,8 @@ Une source en panne ne bloque rien : sa rubrique disparaît et le reste est gén
 | Les valeurs de marché | `config.yaml` | `markets.groups` (codes Yahoo Finance) |
 | Les actualités bourse et crypto | `config.yaml` | `markets.feeds` |
 | La ville de la météo | `config.yaml` | `weather` |
-| Les citations | `config.yaml` | `personal.quotes` |
+| La citation du jour | `config.yaml` | `personal.quote_feed` (flux RSS) ; `personal.quotes` sert de secours |
+| L'envoi sur Telegram | `config.yaml` et `.env` | `telegram.enabled` ; jeton et identifiant du chat dans `.env` |
 | L'agenda Google lu | `config.yaml` | `calendar.google.calendar_id` |
 | Le nombre d'articles par zone | `src/signal_matin/renderer.py` | constantes `SHEET_…` en haut du bloc « une feuille » |
 | Les tailles, polices, espacements | `web/signal_matin.css` | bloc « Edition une feuille » |
@@ -75,6 +77,7 @@ Le projet exclut volontairement ces fichiers du dépôt :
 | `config.yaml` | Mes réglages | À recréer depuis `config.perso.yaml` |
 | `credentials.json` | Accès Google (client OAuth) | À recopier à la main, ou à retélécharger depuis Google Cloud |
 | `token.json` | Autorisation Google | Recréé par `signal-matin auth-google` |
+| `.env` | Jeton du bot Telegram et identifiant du chat | À recréer depuis `.env.example` |
 | `output/` | Journaux générés | Recréé à chaque génération |
 
 `config.perso.yaml` est la copie versionnée de mes réglages. Après une modification
@@ -173,6 +176,28 @@ Pour imprimer en recto verso depuis la machine :
 lp -o sides=two-sided-long-edge output/pdf/AAAA-MM-JJ-signal-matin.pdf
 ```
 
+### 5. Recevoir le journal sur Telegram
+
+Quand `telegram.enabled` vaut `true` dans `config.yaml`, chaque `generate` envoie le
+PDF dans une conversation Telegram. La tâche du matin n'a donc pas à changer.
+
+1. Dans Telegram, écrire à `@BotFather`, envoyer `/newbot` et noter le jeton donné.
+2. Envoyer un message quelconque au nouveau bot.
+3. Ouvrir `https://api.telegram.org/bot<JETON>/getUpdates` : l'identifiant du chat
+   est le nombre affiché dans `"chat":{"id":…}`.
+4. Créer le fichier `.env` à la racine (il n'est pas dans Git) :
+
+```
+TELEGRAM_BOT_TOKEN=123456:ABC...
+TELEGRAM_CHAT_ID=123456789
+```
+
+Si l'envoi échoue, le PDF reste dans `output/pdf/` et la raison est écrite dans
+`output/cron.log`.
+
+Avec Docker, `compose.yaml` transmet ces deux variables au conteneur : le fichier
+`.env` doit donc se trouver dans le dossier d'où `docker compose` est lancé.
+
 ## Récupérer les mises à jour de l'auteur
 
 ### Le principe
@@ -232,7 +257,7 @@ Les conflits sont les plus probables dans `src/signal_matin/renderer.py`,
 `src/signal_matin/pipeline.py`, `src/signal_matin/models.py` et les deux feuilles
 de style, où mon code est inséré au milieu de celui de l'auteur. Les fichiers
 entièrement à moi ne peuvent pas en avoir : `connectors/markets.py`,
-`connectors/article.py`, `Dockerfile`, `compose.yaml`, `config.perso.yaml` et ce guide.
+`connectors/article.py`, `connectors/quote.py`, `telegram.py`, `Dockerfile`, `compose.yaml`, `config.perso.yaml` et ce guide.
 
 ### À ne pas faire
 
@@ -249,7 +274,10 @@ entièrement à moi ne peuvent pas en avoir : `connectors/markets.py`,
 - les cours de marché (`connectors/markets.py`) ;
 - la lecture du début des articles sur le site des médias (`connectors/article.py`) ;
 - le classement des articles par importance ;
-- la météo à 5 jours, une citation différente chaque jour (`personal.quotes`) ;
+- la météo à 5 jours ;
+- une citation du jour lue dans un flux RSS (`connectors/quote.py`), avec une liste
+  de secours dans `personal.quotes` ;
+- l'envoi du PDF sur Telegram après chaque génération (`telegram.py`) ;
 - un format par défaut réglable dans `config.yaml` (`mode:`) ;
 - les fichiers Docker.
 
