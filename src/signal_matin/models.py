@@ -13,6 +13,7 @@ class Modele(BaseModel):
 
 
 class DensityMode(str, Enum):
+    SHEET = "sheet"
     COMPACT = "compact"
     STANDARD = "standard"
     EXTENDED = "extended"
@@ -65,6 +66,14 @@ class EditionMeta(Modele):
     density: DensityMode = DensityMode.STANDARD
 
 
+class WeatherDay(Modele):
+    date: dt.date
+    condition: str = Field(default="", max_length=120)
+    low_c: float | None = None
+    high_c: float | None = None
+    rain_pct: float | None = None
+
+
 class WeatherBlock(Modele):
     location: str = Field(default="", max_length=120)
     condition: str = Field(default="Indisponible", max_length=120)
@@ -74,6 +83,7 @@ class WeatherBlock(Modele):
     wind_kmh: float | None = None
     summary: str = Field(default="", max_length=420)
     advice: str = Field(default="", max_length=240)
+    forecast: list[WeatherDay] = Field(default_factory=list, max_length=7)
 
 
 class AgendaItem(Modele):
@@ -240,19 +250,33 @@ class TechBrief(Modele):
     verification: str = Field(default="", max_length=600)
 
 
+class MarketQuote(Modele):
+    name: str = Field(min_length=1, max_length=60)
+    value: float
+    change: float | None = None
+    change_pct: float | None = None
+    unit: str = Field(default="", max_length=8)
+    decimals: int | None = Field(default=None, ge=0, le=6)
+
+
+class MarketGroup(Modele):
+    name: str = Field(min_length=1, max_length=60)
+    quotes: list[MarketQuote] = Field(default_factory=list, max_length=12)
+
+
 class MorningEdition(Modele):
     schema_version: Literal["1.0"] = "1.0"
     generated_at: dt.datetime
     demo: bool = False
     edition: EditionMeta
-    sources: list[DataSourceStatus] = Field(default_factory=list, max_length=16)
+    sources: list[DataSourceStatus] = Field(default_factory=list, max_length=20)
     weather: WeatherBlock | None = None
     agenda: list[AgendaItem] = Field(default_factory=list, max_length=24)
     priorities: list[TaskItem] = Field(default_factory=list, max_length=12)
     reminders: list[TaskItem] = Field(default_factory=list, max_length=16)
     news: NewsBundle = Field(default_factory=NewsBundle)
-    tech: list[DigestItem] = Field(default_factory=list, max_length=16)
-    tech_news: list[NewsItem] = Field(default_factory=list, max_length=12)
+    tech: list[DigestItem] = Field(default_factory=list, max_length=24)
+    tech_news: list[NewsItem] = Field(default_factory=list, max_length=24)
     # Facultatif : remplace le chapitre tech quand un pipeline externe le fournit.
     tech_brief: TechBrief | None = None
     curiosity_news: list[NewsItem] = Field(default_factory=list, max_length=8)
@@ -261,6 +285,8 @@ class MorningEdition(Modele):
     social_digest: list[DigestItem] = Field(default_factory=list, max_length=12)
     community_digest: list[DigestItem] = Field(default_factory=list, max_length=12)
     recommendations: list[Recommendation] = Field(default_factory=list, max_length=12)
+    markets: list[MarketGroup] = Field(default_factory=list, max_length=10)
+    market_news: list[NewsItem] = Field(default_factory=list, max_length=8)
     personal: PersonalBlock = Field(default_factory=PersonalBlock)
     extras: Extras = Field(default_factory=Extras)
     learning: LearningPage = Field(default_factory=LearningPage)

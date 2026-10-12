@@ -36,6 +36,37 @@ def test_no_major_overflow():
         assert not [page for page in layout if page["overflow"]]
 
 
+def test_sheet_mode_always_fits_two_pages():
+    demo = construire_demo(dt.date(2026, 9, 26))
+    long_news = [
+        demo.tech_news[0].model_copy(update={
+            "title": f"Titre volontairement tres long numero {index} " * 4,
+            "summary": "Resume developpe. " * 60,
+            "category": "IA" if index % 2 else "Dev",
+        })
+        for index in range(24)
+    ]
+    stressed = demo.model_copy(update={
+        "tech_news": long_news,
+        "news": demo.news.model_copy(update={"world": long_news[:12], "france": long_news[:12]}),
+    })
+    for source in (demo, stressed):
+        layout = inspecter_html(render_html(normaliser_edition(source, mode="sheet")))
+        assert len(layout) == 2
+        assert not [page for page in layout if page["overflow"]]
+
+
+def test_sheet_mini_articles_end_on_a_full_sentence():
+    from signal_matin.renderer import _mini_article
+
+    text = _mini_article("Premiere phrase complete. " + "mot " * 400)
+    assert text == "Premiere phrase complete." or text.endswith(".")
+    assert "..." not in text
+    assert _mini_article("Une phrase. Une autre coupee par le flux [...]") == "Une phrase."
+    assert _mini_article("Comments") == ""
+    assert _mini_article("https://exemple.org/article") == ""
+
+
 def test_pdf_is_a4(tmp_path):
     edition = normaliser_edition(
         construire_demo(dt.date(2026, 9, 26)), mode="standard")

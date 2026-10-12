@@ -51,6 +51,15 @@ tech:
   max_age_hours: 96
   feeds: []
 
+# Cours de marché (Yahoo Finance, sans clé), affichés par l'édition `--mode sheet`.
+markets:
+  feeds: []
+  groups: []
+  # - name: "Indices"
+  #   symbols:
+  #     - { symbol: "^FCHI", name: "CAC 40" }
+  #     - { symbol: "BTC-EUR", name: "Bitcoin", unit: "€" }
+
 recommendations: []
 personal:
   greeting: "Bonjour."

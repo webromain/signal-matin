@@ -6,7 +6,8 @@ from pathlib import Path
 
 from .config import ROOT, setting
 from .connectors import (
-    collect_google_calendar, collect_ics, collect_rss, collect_tasks,
+    collect_google_calendar, collect_ics, collect_markets, collect_rss,
+    collect_tasks,
     collect_weather,
 )
 from .daily_learning import construire_apprentissage_du_jour
@@ -113,8 +114,24 @@ def build_live(
         tech_news, tech_status = [], _disabled("Technologie & IA")
     statuses.append(tech_status)
 
+    markets, market_news = [], []
+    if _enabled(config, "markets"):
+        markets, market_status = collect_markets(setting(config, "markets", {}) or {})
+        statuses.append(market_status)
+        market_feeds = setting(config, "markets.feeds", []) or []
+        if market_feeds and _enabled(config, "rss"):
+            market_news, market_news_status = collect_rss(
+                market_feeds, now,
+                limit=int(setting(config, "markets.news_limit", 3) or 3),
+                max_age_hours=int(setting(config, "markets.max_age_hours", 48) or 48),
+                status_name="Actualites des marches",
+            )
+            statuses.append(market_news_status)
+    else:
+        statuses.append(_disabled("Marches"))
+
     tech_digest = [DigestItem(
-        title=item.title, summary=item.summary, source=item.source,
+        title=item.title[:220], summary=item.summary[:900], source=item.source,
         importance=item.importance,
     ) for item in tech_news]
     curiosities = [
@@ -125,10 +142,17 @@ def build_live(
         _recommendations(setting(config, "recommendations", []) or [])
         if _enabled(config, "recommendations") else []
     )
-    quote_text = str(setting(config, "personal.quote.text", "") or "").strip()
+    # Une liste personal.quotes fait tourner une citation differente chaque jour.
+    quotes = [q for q in (setting(config, "personal.quotes", []) or []) if q]
+    chosen = (
+        quotes[now.date().toordinal() % len(quotes)] if quotes
+        else setting(config, "personal.quote", {}) or {}
+    )
+    if isinstance(chosen, str):
+        chosen = {"text": chosen}
+    quote_text = str(chosen.get("text") or "").strip()
     quote = QuoteBlock(
-        text=quote_text,
-        author=str(setting(config, "personal.quote.author", "") or ""),
+        text=quote_text[:420], author=str(chosen.get("author") or "")[:120],
     ) if quote_text else None
 
     date = now.date()
@@ -149,6 +173,7 @@ def build_live(
         tech=tech_digest, tech_news=tech_news,
         curiosity_news=curiosities,
         recommendations=recommendations,
+        markets=markets, market_news=market_news[:8],
         personal=PersonalBlock(
             greeting=str(setting(config, "personal.greeting", "Bonjour.") or "Bonjour."),
             note=str(setting(config, "personal.note", "") or ""),

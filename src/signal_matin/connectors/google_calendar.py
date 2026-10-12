@@ -74,9 +74,9 @@ def collect_google_calendar(
             else:
                 event_start = dt.datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone()
             events.append(AgendaItem(
-                title=str(event.get("summary") or "Sans titre"),
+                title=str(event.get("summary") or "Sans titre")[:180],
                 start=event_start, all_day=all_day,
-                location=str(event.get("location") or ""),
+                location=str(event.get("location") or "")[:160],
             ))
         return events, DataSourceStatus(
             name="Google Calendar", state=DataState.LIVE,

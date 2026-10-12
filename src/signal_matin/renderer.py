@@ -9,11 +9,12 @@ import base64
 import datetime as dt
 import html
 import mimetypes
+import re
 from pathlib import Path
 
 from .models import (
-    AgendaItem, DensityMode, DigestItem, MorningEdition, NewsItem,
-    Recommendation, TaskItem,
+    AgendaItem, DensityMode, DigestItem, MarketGroup, MarketQuote,
+    MorningEdition, NewsItem, Recommendation, TaskItem,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -118,7 +119,7 @@ def edition_meta(edition: MorningEdition) -> str:
     <div class="edition-meta">
       <span>NO {meta.number:04d}</span>
       <span>{_e(_date_fr(meta.date).upper())}</span>
-      <span>{_e(meta.density.value.upper())}</span>
+      <span>{_e("UNE FEUILLE" if meta.density == DensityMode.SHEET else meta.density.value.upper())}</span>
     </div>{demo}
     """
 
@@ -514,8 +515,8 @@ def notes_space(tall: bool = False) -> str:
 
 
 def _page(edition: MorningEdition, number: int, label: str, content: str,
-          first: bool = False, slug: str = "") -> str:
-    header = masthead(edition) if first else f"""
+          first: bool = False, slug: str = "", header: str | None = None) -> str:
+    header = header if header is not None else masthead(edition) if first else f"""
       <header class="running-head">
         <strong>{_e(edition.edition.title)}</strong>
         <span>{_e(label.upper())}</span>
@@ -937,15 +938,335 @@ def _page_standard_tail(edition: MorningEdition, number: int) -> str:
     return _page(edition, number, "Journee & liens", body, slug="standard-tail")
 
 
+# Nombre d'articles de l'edition une feuille : peu, pour laisser respirer la page.
+SHEET_NEWS_COUNT = 6      # France & monde, gros titre compris
+SHEET_FRONT_NEWS = 5      # dont ceux du recto ; le reste ouvre le verso
+SHEET_CULTURE_COUNT = 3   # culture & sciences
+SHEET_WATCH_COUNT = 3     # par colonne de veille (IA, puis dev)
+SHEET_ARTICLE_LIMIT = 360
+SHEET_FRONT_LIMIT = 300    # au recto, plus court pour laisser de la place a l'agenda
+SHEET_BACK_LIMIT = 300     # au verso, plus court pour loger jeux et previsions
+SHEET_CULTURE_CATEGORIES = {"science", "sciences", "culture"}
+SHEET_AI_CATEGORIES = {"ia", "ai", "data", "data science", "intelligence artificielle"}
+SHEET_EMPTY_SUMMARIES = {"comments", "commentaires", "resume non fourni par le flux."}
+# Formules ajoutees par les flux eux-memes, sans interet a l'impression.
+SHEET_FEED_NOISE = (
+    r"The (post|article) .{0,300}? appeared first on .{0,80}?\.?$",
+    r"(Commentaires )?L['’]article .{0,300}? (a été posté dans|est apparu en premier sur) .{0,120}$",
+    r"^(Article URL|Comments URL): \S+.*$",
+)
+MARKET_UNITS = {"%": " %", "€": " €", "$": " $"}
+
+
+def _mini_article(value: str, limit: int = SHEET_ARTICLE_LIMIT) -> str:
+    """Garde des phrases entieres : un mini-article ne finit jamais par des points de suspension."""
+    value = " ".join(str(value or "").split())
+    for pattern in SHEET_FEED_NOISE:
+        value = re.sub(pattern, "", value, flags=re.IGNORECASE).strip()
+    if value.casefold() in SHEET_EMPTY_SUMMARIES or re.fullmatch(r"https?://\S+", value):
+        return ""
+    # Un flux qui tronque lui-meme son resume : on revient a la derniere phrase complete.
+    if re.search(r"(\[…\]|\[\.\.\.\]|\(\.\.\.\)|…|\.\.\.)$", value):
+        value = re.sub(r"\s*(\[…\]|\[\.\.\.\]|\(\.\.\.\)|…|\.\.\.)$", "", value)
+        cut = max(value.rfind(mark) for mark in (". ", "! ", "? "))
+        value = value[:cut + 1] if cut > 0 else value.rstrip(" ,;:-") + "."
+    if len(value) <= limit:
+        return value
+    cut = max(value.rfind(mark, 0, limit) for mark in (". ", "! ", "? ", "… "))
+    if cut < limit // 3:
+        return value[:limit].rsplit(" ", 1)[0].rstrip(" ,;:-") + "."
+    return value[:cut + 1]
+
+
+def _sheet_date(edition: MorningEdition) -> str:
+    date = _date_fr(edition.edition.date)
+    return date[:1].upper() + date[1:]
+
+
+def _sheet_byline(item: NewsItem) -> str:
+    source = item.source
+    published = source.published_at.astimezone().strftime("%H:%M") if source.published_at else ""
+    rest = " · ".join(_e(bit) for bit in (source.name, published) if bit)
+    return f'<p class="sheet-byline"><span>{_e(item.category)}</span>{" · " + rest if rest else ""}</p>'
+
+
+def _sheet_item(item: NewsItem, brief: bool = False, limit: int = SHEET_ARTICLE_LIMIT) -> str:
+    summary = _mini_article(item.expanded_summary or item.summary, 190 if brief else limit)
+    return f"""
+    <article class="sheet-item{' sheet-brief' if brief else ''}">
+      <h3>{_e(item.title)}</h3>
+      {f'<p class="sheet-summary">{_e(summary)}</p>' if summary else ''}
+      {_sheet_byline(item)}
+    </article>
+    """
+
+
+def _sheet_weight(item: NewsItem) -> int:
+    """Hauteur approximative d'un mini-article, pour equilibrer deux colonnes."""
+    return 90 + len(item.title) * 3 + len(_mini_article(item.expanded_summary or item.summary))
+
+
+def _sheet_zone(
+    title: str, items: list[NewsItem], extra: str = "", slug: str = "", columns: int = 1,
+    limit: int = SHEET_ARTICLE_LIMIT,
+) -> str:
+    if not items and not extra:
+        return ""
+    stacks: list[list[NewsItem]] = [[] for _ in range(columns)]
+    for item in items:
+        min(stacks, key=lambda stack: sum(map(_sheet_weight, stack))).append(item)
+    flows = "".join(
+        f'<div class="sheet-flow">{"".join(_sheet_item(item, limit=limit) for item in stack)}'
+        f'{extra if index == columns - 1 else ""}</div>'
+        for index, stack in enumerate(stacks)
+    )
+    body = f'<div class="sheet-split">{flows}</div>' if columns > 1 else flows
+    return (
+        f'<section class="sheet-zone{f" sheet-zone-{slug}" if slug else ""}">'
+        f'{section_header(title) if title else ""}{body}</section>'
+    )
+
+
+def _sheet_pick(groups: list[list[NewsItem]], count: int, seen: set[str]) -> list[NewsItem]:
+    """Alterne entre les rubriques pour ne pas en laisser une seule remplir la page."""
+    picked: list[NewsItem] = []
+    queues = [list(group) for group in groups]
+    while len(picked) < count and any(queues):
+        for queue in queues:
+            while queue and queue[0].title.casefold() in seen:
+                queue.pop(0)
+            if queue and len(picked) < count:
+                seen.add(queue[0].title.casefold())
+                picked.append(queue.pop(0))
+    return picked
+
+
+def _fr_number(value: float, decimals: int | None = None) -> str:
+    if decimals is None:
+        decimals = 0 if abs(value) >= 10000 else 2
+    return f"{value:,.{decimals}f}".replace(",", " ").replace(".", ",")
+
+
+def _market_row(quote: MarketQuote) -> str:
+    value = _fr_number(quote.value, quote.decimals) + MARKET_UNITS.get(quote.unit, "")
+    # Un taux varie en points, pas en pourcentage de lui-meme.
+    delta = quote.change if quote.unit == "%" else quote.change_pct
+    if delta is None:
+        change = ""
+    else:
+        arrow = "▲" if delta > 0.004 else "▼" if delta < -0.004 else "="
+        suffix = " pt" if quote.unit == "%" else " %"
+        change = f'{arrow} {f"{delta:+.2f}".replace(".", ",")}{suffix}'
+    return (
+        f'<tr><td>{_e(quote.name)}</td><td>{_e(value)}</td>'
+        f'<td>{_e(change)}</td></tr>'
+    )
+
+
+def market_table(groups: list[MarketGroup]) -> str:
+    if not groups:
+        return ""
+    rows = "".join(
+        f'<tr class="market-group"><th colspan="3">{_e(group.name)}</th></tr>'
+        + "".join(_market_row(quote) for quote in group.quotes)
+        for group in groups
+    )
+    return (
+        f'<div class="market-block"><table class="market-table">{rows}</table>'
+        '<p class="market-note">Dernier cours connu et variation sur la derniere seance.</p></div>'
+    )
+
+
+def _sheet_weather(edition: MorningEdition) -> str:
+    weather = edition.weather
+    if weather is None:
+        return ""
+    bits = [weather.condition]
+    if weather.low_c is not None and weather.high_c is not None:
+        bits.append(f"{weather.low_c:g}° / {weather.high_c:g}°")
+    if weather.wind_kmh is not None:
+        bits.append(f"vent {weather.wind_kmh:g} km/h")
+    temp = "" if weather.temperature_c is None else f"<strong>{weather.temperature_c:g}°</strong>"
+    return (
+        f'<div class="sheet-weather">{temp}<div><span>{_e(weather.location)}</span>'
+        f'<p>{_e(" · ".join(bits))}</p></div></div>'
+    )
+
+
+def _sheet_band(edition: MorningEdition) -> str:
+    """Bandeau du bas du verso : apprentissages du jour et citation."""
+    learning = edition.learning
+    cells: list[str] = []
+    for label, word in (("Mot francais", learning.french_word), ("Vocabulaire tech", learning.tech_word)):
+        if word:
+            cells.append(
+                f'<article><span>{label}</span><h3>{_e(word.word)}</h3>'
+                f'<p>{_e(_truncate(word.definition, 150))}</p></article>'
+            )
+    if learning.math:
+        cells.append(
+            f'<article><span>Calcul mental</span><h3>{_e(learning.math.question)}</h3>'
+            f'<p class="band-answer">Reponse : {_e(learning.math.answer)}</p></article>'
+        )
+    quote = edition.extras.quote
+    if quote:
+        author = f'<p class="band-author">{_e(quote.author)}</p>' if quote.author else ""
+        cells.append(
+            f'<article class="band-quote"><span>Citation</span>'
+            f'<blockquote>« {_e(_truncate(quote.text, 190))} »</blockquote>{author}</article>'
+        )
+    return f'<section class="sheet-band">{"".join(cells)}</section>' if cells else ""
+
+
+def _sheet_agenda(items: list[AgendaItem], limit: int = 6) -> str:
+    """Agenda du recto : une colonne pour la journee entiere, une pour les horaires, une ligne par evenement."""
+    if not items:
+        return ""
+    all_day = [item for item in items if item.all_day][:limit]
+    timed = [item for item in items if not item.all_day][:limit]
+    columns = ""
+    if all_day:
+        rows = "".join(f'<li><strong>{_e(item.title)}</strong></li>' for item in all_day)
+        columns += f'<div><p class="agenda-label">Toute la journee</p><ul class="agenda-rows">{rows}</ul></div>'
+    if timed:
+        rows = "".join(
+            f'<li><time>{_e(_time(item.start) or "A caler")}</time><strong>{_e(item.title)}'
+            f'{f"<small>{_e(_truncate(item.location or item.note, 40))}</small>" if item.location or item.note else ""}'
+            '</strong></li>'
+            for item in timed
+        )
+        columns += f'<div><p class="agenda-label">Horaires</p><ul class="agenda-rows">{rows}</ul></div>'
+    return (
+        f'<section class="agenda-block">{section_header("Agenda", "Aujourd hui")}'
+        f'<div class="agenda-columns">{columns}</div></section>'
+    )
+
+
+def _sheet_crossword(edition: MorningEdition) -> str:
+    puzzle = edition.learning.crossword
+    if puzzle is None or not puzzle.entries:
+        return ""
+    return f'<div class="sheet-crossword" style="--cells:{puzzle.size}">{crossword_block(edition)}</div>'
+
+
+def _sheet_forecast(edition: MorningEdition) -> str:
+    days = edition.weather.forecast if edition.weather else []
+    if not days:
+        return ""
+    rows = "".join(
+        f'<tr><th>{_e(WEEKDAYS[day.date.weekday()][:3].capitalize())}. {day.date.day}</th>'
+        f'<td>{_e(day.condition)}</td>'
+        f'<td>{"" if day.low_c is None or day.high_c is None else f"{day.low_c:g}° / {day.high_c:g}°"}</td>'
+        f'<td>{"" if day.rain_pct is None else f"{day.rain_pct:g}\u202f%"}</td></tr>'
+        for day in days
+    )
+    return (
+        f'<section class="sheet-forecast">{section_header("Meteo a 5 jours", edition.weather.location)}'
+        f'<table><thead><tr><th></th><th></th><th>Min / max</th><th>Pluie</th></tr></thead>'
+        f'<tbody>{rows}</tbody></table></section>'
+    )
+
+
+def _sheet_news(edition: MorningEdition) -> tuple[list[NewsItem], list[NewsItem]]:
+    """Articles France & monde (hors gros titre), puis culture & sciences."""
+    bundle = edition.news
+    lead = bundle.lead
+    lead_is_culture = bool(lead and lead.category.casefold() in SHEET_CULTURE_CATEGORIES)
+    seen = {lead.title.casefold()} if lead else set()
+    news = _sheet_pick(
+        [bundle.france, bundle.world, bundle.economy, bundle.society],
+        SHEET_NEWS_COUNT - (1 if lead and not lead_is_culture else 0), seen,
+    )
+    culture = _sheet_pick(
+        [bundle.culture, bundle.science],
+        SHEET_CULTURE_COUNT - (1 if lead_is_culture else 0), seen,
+    )
+    return news, culture
+
+
+def _page_sheet_front(edition: MorningEdition) -> str:
+    """Recto de l'edition une feuille : l'essentiel du jour, les marches, l'agenda, le bandeau."""
+    lead = edition.news.lead
+    news, _ = _sheet_news(edition)
+    front_news = news[:max(0, SHEET_FRONT_NEWS - (1 if lead else 0))]
+    day = "".join(filter(None, [
+        _sheet_agenda(edition.agenda),
+        task_list("Priorites", edition.priorities, 4),
+        task_list("A ne pas oublier", edition.reminders, 3),
+    ]))
+    main = ""
+    if lead:
+        main += f"""
+        <article class="news-lead sheet-lead">
+          <h2>{_e(lead.title)}</h2>
+          <p class="standfirst">{_e(_mini_article(lead.expanded_summary or lead.summary, 420))}</p>
+          {_sheet_byline(lead)}
+        </article>
+        """
+    main += _sheet_zone("", front_news, slug="main", columns=2, limit=SHEET_FRONT_LIMIT)
+    if day:
+        main += f'<div class="sheet-day">{day}</div>'
+    if not main:
+        main = '<p class="empty-state">Aucune actualite disponible : aucun flux n\'a pu etre lu et aucun article n\'est invente.</p>'
+    markets = market_table(edition.markets)
+    if markets and edition.market_news:
+        markets += _sheet_item(min(edition.market_news, key=_sheet_weight))
+    aside = _sheet_zone("Marches", [], markets, slug="aside") if markets else ""
+    body = f'<div class="sheet-body"><div class="sheet-main">{main}</div>{aside}</div>'
+    header = (
+        f'<header class="sheet-date"><h1>{_e(_sheet_date(edition))}</h1>'
+        f'{_sheet_weather(edition)}</header>'
+    )
+    return _page(
+        edition, 1, "Actualites",
+        f'<div class="sheet-front">{body}{_sheet_band(edition)}</div>',
+        slug="front", header=header,
+    )
+
+
+def _page_sheet_back(edition: MorningEdition, number: int) -> str:
+    """Verso de l'edition une feuille : la suite des articles, sans titre de rubrique."""
+    lead = edition.news.lead
+    news, culture = _sheet_news(edition)
+    rest = news[max(0, SHEET_FRONT_NEWS - (1 if lead else 0)):]
+    seen: set[str] = set()
+    ai = _sheet_pick(
+        [[item for item in edition.tech_news if item.category.casefold() in SHEET_AI_CATEGORIES]],
+        SHEET_WATCH_COUNT, seen,
+    )
+    dev = _sheet_pick(
+        [[item for item in edition.tech_news if item.category.casefold() not in SHEET_AI_CATEGORIES]],
+        SHEET_WATCH_COUNT, seen,
+    )
+    # Un seul flux sur trois colonnes : chaque colonne se remplit avant la suivante,
+    # et seuls les derniers articles sautent si la page est pleine.
+    cards = "".join(
+        _sheet_item(item, limit=SHEET_BACK_LIMIT) for item in [*rest, *culture, *ai, *dev])
+    zones = cards or '<p class="empty-state">Aucun autre article ce matin.</p>'
+    extras = _sheet_crossword(edition) + _sheet_forecast(edition)
+    header = f"""
+      <header class="running-head">
+        <strong>{_e(_sheet_date(edition))}</strong>
+        <span></span>
+        <span></span>
+      </header>"""
+    return _page(
+        edition, number, "La suite",
+        f'<div class="sheet-back"><div class="sheet-columns">{zones}</div>'
+        f'{f"""<div class="sheet-extras">{extras}</div>""" if extras else ""}</div>',
+        slug="sheet-back", header=header,
+    )
+
+
 def render_html(edition: MorningEdition, css: str | None = None) -> str:
     css = CSS_PATH.read_text(encoding="utf-8") if css is None else css
     pagination = PAGINATION_PATH.read_text(encoding="utf-8")
     mode = edition.edition.density
-    pages = [_page_one(edition)]
+    pages = [_page_sheet_front(edition) if mode == DensityMode.SHEET else _page_one(edition)]
     secondary = edition.news.all_secondary()
     brief_count = min(FRONT_BRIEF_LIMIT, len(secondary))
     detail_chunks: list[list[NewsItem]] = []
-    if brief_count:
+    if brief_count and mode != DensityMode.SHEET:
         if mode == DensityMode.COMPACT:
             detail_chunks = [secondary[:FRONT_BRIEF_LIMIT]]
         else:
@@ -972,7 +1293,9 @@ def render_html(edition: MorningEdition, css: str | None = None) -> str:
             has_more=part + 1 < len(detail_chunks),
         ))
         number += 1
-    if mode == DensityMode.COMPACT:
+    if mode == DensityMode.SHEET:
+        pages.append(_page_sheet_back(edition, number))
+    elif mode == DensityMode.COMPACT:
         pages.append(_page_compact(edition, number, start=detail_count))
         pages.append(_page_learning(edition, number + 1))
     elif mode == DensityMode.STANDARD:
