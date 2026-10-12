@@ -61,3 +61,29 @@ def test_weather_forecast_skips_today_and_bad_rows():
     assert [day.date.isoformat() for day in days] == ["2026-10-13"]
     assert days[0].condition == "Pluie faible"
     assert days[0].rain_pct == 60
+
+
+def test_article_excerpt_keeps_real_paragraphs_only():
+    from signal_matin.connectors.article import extract_excerpt
+
+    page = (
+        "<nav><p>" + "Menu du site sans rapport avec l'article, a ignorer totalement ici. " * 2 + "</p></nav>"
+        "<article><p>Court.</p>"
+        "<p>Premier <a href='#'>vrai</a> paragraphe de l&#39;article, assez long pour etre "
+        "retenu par l'extraction du texte.</p>"
+        "<p>Second paragraphe de l'article, lui aussi assez long pour etre retenu "
+        "par l'extraction du texte.</p></article>"
+    )
+    excerpt = extract_excerpt(page)
+    assert excerpt.startswith("Premier vrai paragraphe de l'article")
+    assert "Second paragraphe" in excerpt
+    assert "Menu du site" not in excerpt and "Court." not in excerpt
+
+
+def test_article_page_decoding_follows_declared_charset():
+    from signal_matin.connectors.article import decode_page
+
+    latin = '<meta charset="iso-8859-1"><p>réunit des outils d\'entraînement</p>'.encode("iso-8859-1")
+    assert "réunit des outils d'entraînement" in decode_page(latin)
+    assert "déployé" in decode_page("<p>déployé</p>".encode("utf-8"))
+    assert "accélérer" in decode_page("<p>accélérer</p>".encode("cp1252"), "utf-8")

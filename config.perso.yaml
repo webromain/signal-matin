@@ -1,0 +1,179 @@
+# Copie vers config.yaml. Le mode démo garantit un premier rendu immédiat.
+demo: false
+
+# Format par défaut : sheet (une feuille recto verso), compact, standard, extended ou auto.
+mode: sheet
+
+paper:
+  title: "Signal Matin"
+  subtitle: "France, monde, veille et marchés"
+  motto: "Voir clair avant de voir l'écran."
+
+modules:
+  weather: true
+  calendar: true
+  tasks: false
+  news: true
+  tech: true
+  rss: true
+  games: false
+  # Mot français, vocabulaire tech et calcul mental du bandeau au bas du verso.
+  tech_vocabulary: true
+  recommendations: false
+  markets: true
+
+weather:
+  location: "Paris"
+  latitude: 48.8566
+  longitude: 2.3522
+
+calendar:
+  ics: []
+  # - name: "Agenda personnel"
+  #   source: "calendars/agenda.ics" # chemin local ou URL privée placée seulement ici
+  # Passe à true une fois `signal-matin auth-google` lancé (voir README, Google Calendar).
+  google:
+    enabled: true
+    calendar_id: "primary"
+    credentials_file: "${GOOGLE_CREDENTIALS_FILE}"
+    token_file: "${GOOGLE_TOKEN_FILE}"
+
+tasks:
+  priorities: []
+  # - title: "Finaliser le dossier"
+  #   importance: "high"
+  reminders: []
+
+# L'édition une feuille imprime 6 articles France & monde et 3 culture & sciences.
+# La limite est bien plus haute : plus il y a de candidats, mieux le journal repère
+# les sujets importants (ceux que plusieurs médias traitent le même jour).
+news:
+  limit: 30
+  max_age_hours: 48
+  feeds:
+    - name: "Le Monde"
+      category: "France"
+      url: "https://www.lemonde.fr/rss/une.xml"
+    - name: "Le Monde"
+      category: "Monde"
+      url: "https://www.lemonde.fr/international/rss_full.xml"
+    - name: "franceinfo"
+      category: "France"
+      url: "https://www.francetvinfo.fr/titres.rss"
+    - name: "France 24"
+      category: "Monde"
+      url: "https://www.france24.com/fr/rss"
+    - name: "Le Monde"
+      category: "Sciences"
+      url: "https://www.lemonde.fr/sciences/rss_full.xml"
+    - name: "Le Monde"
+      category: "Culture"
+      url: "https://www.lemonde.fr/culture/rss_full.xml"
+
+# L'édition une feuille imprime 3 articles IA et 3 articles dev, choisis parmi ceux-ci.
+tech:
+  limit: 20
+  max_age_hours: 72
+  # La catégorie "IA" range l'article dans la colonne « Veille IA & data » du verso ;
+  # toutes les autres catégories vont dans « Veille dev ».
+  # Les flux sont lus dans l'ordre, un article chacun : IA et dev alternent pour
+  # équilibrer les deux colonnes.
+  feeds:
+    - name: "ActuIA"
+      category: "IA"
+      url: "https://www.actuia.com/feed/"
+    - name: "Human Coders News"
+      category: "Dev"
+      url: "https://news.humancoders.com/items/feed.rss"
+    - name: "The Decoder"
+      category: "IA"
+      url: "https://the-decoder.com/feed/"
+    - name: "Developpez.com"
+      category: "Dev"
+      url: "https://www.developpez.com/index/rss"
+    - name: "Le Monde Informatique"
+      category: "IA"
+      url: "https://www.lemondeinformatique.fr/flux-rss/thematique/intelligence-artificielle/rss.xml"
+    - name: "Next"
+      category: "Tech"
+      url: "https://next.ink/feed/"
+    - name: "Simon Willison"
+      category: "IA"
+      url: "https://simonwillison.net/atom/everything/"
+    - name: "GitHub Blog"
+      category: "Outils"
+      url: "https://github.blog/feed/"
+    - name: "MIT Technology Review"
+      category: "IA"
+      url: "https://www.technologyreview.com/topic/artificial-intelligence/feed"
+    - name: "CERT-FR"
+      category: "Sécurité"
+      url: "https://www.cert.ssi.gouv.fr/feed/"
+
+# Cours lus sur Yahoo Finance, sans clé : "symbol" est le code Yahoo de la valeur.
+# "unit" s'affiche après le cours (€, $, %) ; "decimals" force le nombre de décimales.
+markets:
+  # Actualités bourse et crypto : l'édition une feuille en imprime 2 au plus, sous les cours.
+  news_limit: 3
+  max_age_hours: 48
+  feeds:
+    - name: "TradingSat"
+      category: "Bourse"
+      url: "https://www.tradingsat.com/rssbourse.xml"
+    - name: "Cryptoast"
+      category: "Crypto"
+      url: "https://cryptoast.fr/feed/"
+    - name: "Café de la Bourse"
+      category: "Placements"
+      url: "https://www.cafedelabourse.com/feed"
+  groups:
+    - name: "Indices"
+      symbols:
+        - { symbol: "^FCHI", name: "CAC 40" }
+        - { symbol: "^STOXX50E", name: "Euro Stoxx 50" }
+        - { symbol: "^GSPC", name: "S&P 500" }
+        - { symbol: "^IXIC", name: "Nasdaq" }
+    - name: "Actions & ETF"
+      symbols:
+        - { symbol: "HO.PA", name: "Thales", unit: "€" }
+        - { symbol: "NVDA", name: "Nvidia", unit: "$" }
+        - { symbol: "CW8.PA", name: "MSCI World", unit: "€" }
+    - name: "Taux & devises"
+      symbols:
+        - { symbol: "^TNX", name: "Taux US 10 ans", unit: "%" }
+        - { symbol: "EURUSD=X", name: "Euro / dollar", decimals: 4 }
+    - name: "Cryptos"
+      symbols:
+        - { symbol: "BTC-EUR", name: "Bitcoin", unit: "€" }
+        - { symbol: "ETH-EUR", name: "Ethereum", unit: "€" }
+    - name: "Matières premières"
+      symbols:
+        - { symbol: "GC=F", name: "Or (once)", unit: "$" }
+        - { symbol: "BZ=F", name: "Pétrole Brent", unit: "$" }
+
+recommendations: []
+personal:
+  greeting: "Bonjour."
+  note: ""
+  free_window: ""
+  # Une citation différente chaque jour, prise à tour de rôle dans cette liste.
+  # Exemples à remplacer par les tiennes.
+  quotes:
+    - text: "La simplicité est la sophistication suprême."
+      author: "Attribué à Léonard de Vinci"
+    - text: "Ce qui se conçoit bien s'énonce clairement, et les mots pour le dire arrivent aisément."
+      author: "Nicolas Boileau"
+    - text: "La perfection est atteinte, non pas lorsqu'il n'y a plus rien à ajouter, mais lorsqu'il n'y a plus rien à retirer."
+      author: "Antoine de Saint-Exupéry"
+    - text: "Les programmes doivent être écrits pour être lus par des humains, et accessoirement exécutés par des machines."
+      author: "Harold Abelson"
+    - text: "D'abord, résolvez le problème. Ensuite, écrivez le code."
+      author: "John Johnson"
+    - text: "Le doute est le commencement de la sagesse."
+      author: "Aristote"
+    - text: "Il n'y a pas de vent favorable pour celui qui ne sait pas où il va."
+      author: "Sénèque"
+
+printing:
+  printer: ""
+  duplex: true

@@ -7,7 +7,7 @@ from pathlib import Path
 from .config import ROOT, setting
 from .connectors import (
     collect_google_calendar, collect_ics, collect_markets, collect_rss,
-    collect_tasks,
+    collect_tasks, enrich_articles,
     collect_weather,
 )
 from .daily_learning import construire_apprentissage_du_jour
@@ -113,6 +113,11 @@ def build_live(
     else:
         tech_news, tech_status = [], _disabled("Technologie & IA")
     statuses.append(tech_status)
+
+    # L'edition une feuille developpe quelques articles : on va chercher leur debut.
+    if str(mode).lower() == "sheet" and setting(config, "news.full_text", True):
+        news_items = enrich_articles(news_items)
+        tech_news = enrich_articles(tech_news)
 
     markets, market_news = [], []
     if _enabled(config, "markets"):
