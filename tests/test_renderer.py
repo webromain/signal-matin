@@ -160,3 +160,27 @@ def test_delayed_print_reuses_real_task_action():
     assert "$SourceAction.Execute" in script
     assert "$SourceAction.Arguments" in script
     assert "Start-ScheduledTask -TaskName $TacheSource" not in script
+
+
+def test_sheet_ranking_puts_multi_source_story_first():
+    from signal_matin.renderer import _sheet_ranked
+
+    base = construire_demo(dt.date(2026, 9, 26)).tech_news[0]
+
+    def article(title, source, summary="Resume."):
+        return base.model_copy(update={
+            "title": title, "summary": summary, "expanded_summary": summary,
+            "source": base.source.model_copy(update={"name": source}),
+        })
+
+    items = [
+        article("Donald Trump annonce une nouvelle taxe sur l'acier", "A"),
+        article("Un eleve ouvre le feu dans un college d'Aubagne, deux blesses", "B"),
+        article("Tribune : Donald Trump et le cinema americain", "C"),
+        article("College d'Aubagne : un suspect interpelle, deux blesses", "D", "Recit complet. " * 20),
+    ]
+    ranked = _sheet_ranked(items)
+    # Le sujet traite par deux medias passe devant, dans sa version la plus fournie,
+    # et deux articles qui ne partagent qu'un nom propre restent distincts.
+    assert ranked[0].source.name == "D"
+    assert len(ranked) == 3

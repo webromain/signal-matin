@@ -10,6 +10,7 @@ import datetime as dt
 import html
 import mimetypes
 import re
+import unicodedata
 from pathlib import Path
 
 from .models import (
@@ -939,8 +940,9 @@ def _page_standard_tail(edition: MorningEdition, number: int) -> str:
 
 
 # Nombre d'articles de l'edition une feuille : peu, pour laisser respirer la page.
-SHEET_NEWS_COUNT = 6      # France & monde, gros titre compris
-SHEET_FRONT_NEWS = 5      # dont ceux du recto ; le reste ouvre le verso
+SHEET_NEWS_COUNT = 5      # France & monde, gros titre compris
+SHEET_FRONT_NEWS = 3      # dont ceux du recto ; le reste ouvre le verso
+SHEET_LONG_LIMIT = 620     # gros titre et articles developpes du recto
 SHEET_CULTURE_COUNT = 3   # culture & sciences
 SHEET_WATCH_COUNT = 3     # par colonne de veille (IA, puis dev)
 SHEET_ARTICLE_LIMIT = 360
@@ -1063,14 +1065,17 @@ def _market_row(quote: MarketQuote) -> str:
     )
 
 
+def _market_rows(group: MarketGroup) -> str:
+    return (
+        f'<tr class="market-group"><th colspan="3">{_e(group.name)}</th></tr>'
+        + "".join(_market_row(quote) for quote in group.quotes)
+    )
+
+
 def market_table(groups: list[MarketGroup]) -> str:
     if not groups:
         return ""
-    rows = "".join(
-        f'<tr class="market-group"><th colspan="3">{_e(group.name)}</th></tr>'
-        + "".join(_market_row(quote) for quote in group.quotes)
-        for group in groups
-    )
+    rows = "".join(_market_rows(group) for group in groups)
     return (
         f'<div class="market-block"><table class="market-table">{rows}</table>'
         '<p class="market-note">Dernier cours connu et variation sur la derniere seance.</p></div>'
@@ -1167,77 +1172,207 @@ def _sheet_forecast(edition: MorningEdition) -> str:
     )
 
 
-def _sheet_news(edition: MorningEdition) -> tuple[list[NewsItem], list[NewsItem]]:
-    """Articles France & monde (hors gros titre), puis culture & sciences."""
+_RANK_STOPWORDS = {
+    "pour", "dans", "avec", "sans", "plus", "moins", "apres", "avant", "entre", "contre",
+    "leur", "leurs", "cette", "sont", "etre", "fait", "tout", "tous", "comme", "face",
+    "deux", "trois", "selon", "quand", "comment", "pourquoi", "direct", "that", "with",
+    "from", "this", "have", "what", "will", "your", "about", "into", "their", "more",
+}
+
+
+def _rank_keywords(title: str) -> set[str]:
+    plain = unicodedata.normalize("NFKD", title.casefold()).encode("ascii", "ignore").decode()
+    # Six premieres lettres : « lyceen » et « lyceennes » comptent pour le meme mot.
+    return {word[:6] for word in re.findall(r"[a-z0-9]{4,}", plain) if word not in _RANK_STOPWORDS}
+
+
+def _same_story(first: set[str], second: set[str]) -> bool:
+    """Meme sujet si les titres partagent trois mots-cles, ou deux qui pesent lourd.
+
+    Deux mots communs ne suffisent pas toujours : « Donald Trump » rapprocherait
+    des articles sans rapport.
+    """
+    shared = len(first & second)
+    return shared >= 3 or (shared >= 2 and shared / max(1, len(first | second)) >= 0.3)
+
+
+def _sheet_ranked(items: list[NewsItem], headline: NewsItem | None = None) -> list[NewsItem]:
+    """Classe les articles du plus au moins important, un seul par sujet.
+
+    Sans comprendre le texte, deux indices mesurent l'importance : un sujet repris par
+    plusieurs medias le meme jour, et la place que chaque media lui donne dans son flux.
+    Chaque sujet est represente par sa version la plus fournie.
+    """
+    keywords = [_rank_keywords(item.title) for item in items]
+    clusters: list[list[int]] = []
+    for index in range(len(items)):
+        for cluster in clusters:
+            if any(_same_story(keywords[index], keywords[other]) for other in cluster):
+                cluster.append(index)
+                break
+        else:
+            clusters.append([index])
+    scored = []
+    for cluster in clusters:
+        sources = {items[index].source.name for index in cluster}
+        score = 3 * (len(sources) - 1) + (1 - cluster[0] / max(1, len(items)))
+        if headline is not None and any(items[index] is headline for index in cluster):
+            score += 1.5
+        best = max(cluster, key=lambda index: (_sheet_text_length(items[index]), -index))
+        scored.append((score, -cluster[0], items[best]))
+    scored.sort(key=lambda entry: entry[:2], reverse=True)
+    return [item for _, _, item in scored]
+
+
+def _sheet_news(edition: MorningEdition) -> tuple[NewsItem | None, list[NewsItem], list[NewsItem]]:
+    """Gros titre, puis articles France & monde par importance, puis culture & sciences."""
     bundle = edition.news
-    lead = bundle.lead
-    lead_is_culture = bool(lead and lead.category.casefold() in SHEET_CULTURE_CATEGORIES)
-    seen = {lead.title.casefold()} if lead else set()
-    news = _sheet_pick(
-        [bundle.france, bundle.world, bundle.economy, bundle.society],
-        SHEET_NEWS_COUNT - (1 if lead and not lead_is_culture else 0), seen,
-    )
-    culture = _sheet_pick(
-        [bundle.culture, bundle.science],
-        SHEET_CULTURE_COUNT - (1 if lead_is_culture else 0), seen,
-    )
-    return news, culture
+    pool = _sheet_pick([bundle.france, bundle.world, bundle.economy, bundle.society], 48, set())
+    headline = bundle.lead
+    if headline and headline.category.casefold() not in SHEET_CULTURE_CATEGORIES:
+        pool.insert(0, headline)
+    ranked = _sheet_ranked(pool, headline)[:SHEET_NEWS_COUNT]
+    seen = {item.title.casefold() for item in ranked}
+    culture_pool = [bundle.culture, bundle.science]
+    if headline and headline not in pool:
+        culture_pool.insert(0, [headline])
+    culture = _sheet_pick(culture_pool, SHEET_CULTURE_COUNT, seen)
+    return (ranked[0] if ranked else None), ranked[1:], culture
+
+
+def _sheet_masthead(edition: MorningEdition) -> str:
+    """Meme bandeau que la une classique, la date remplacant le nom du journal."""
+    meta = edition.edition
+    weekday, _, rest = _sheet_date(edition).partition(" ")
+    week = meta.date.isocalendar().week
+    return f"""
+    <header class="masthead sheet-masthead">
+      <div class="masthead-rule"></div>
+      <div class="masthead-overline"><span>LE QUOTIDIEN PERSONNEL</span><span>{_e(meta.subtitle)}</span></div>
+      <h1><span>{_e(weekday)}</span><em>{_e(rest)}</em></h1>
+      <div class="edition-meta">
+        <span>NO {meta.number:04d}</span>
+        <span>SEMAINE {week}</span>
+        <span>UNE FEUILLE</span>
+      </div>
+    </header>
+    """
+
+
+def _sheet_card(item: NewsItem, limit: int) -> str:
+    """Article du recto, presente comme sur la une classique : source au-dessus du titre."""
+    summary = _mini_article(item.expanded_summary or item.summary, limit)
+    return f"""
+    <article class="news-card">
+      <p class="article-meta">{_source_line(item)}</p>
+      <h3>{_e(item.title)}</h3>
+      {f'<p>{_e(summary)}</p>' if summary else ''}
+    </article>
+    """
+
+
+def _sheet_markets(groups: list[MarketGroup]) -> str:
+    """Les cours dans la colonne de service du recto."""
+    table = market_table(groups)
+    return f'<section class="sheet-markets">{section_header("Marches")}{table}</section>' if table else ""
+
+
+def _sheet_watch(edition: MorningEdition) -> tuple[list[NewsItem], list[NewsItem]]:
+    """Articles de veille retenus, par importance : IA & data d'un cote, dev de l'autre."""
+    ranked = _sheet_ranked(list(edition.tech_news))
+    ai = [item for item in ranked if item.category.casefold() in SHEET_AI_CATEGORIES]
+    dev = [item for item in ranked if item.category.casefold() not in SHEET_AI_CATEGORIES]
+    return ai[:SHEET_WATCH_COUNT], dev[:SHEET_WATCH_COUNT]
+
+
+def _sheet_text_length(item: NewsItem) -> int:
+    return len(_mini_article(item.expanded_summary or item.summary, SHEET_LONG_LIMIT))
+
+
+def _sheet_front_news(edition: MorningEdition) -> list[NewsItem]:
+    """Articles France & monde du recto, hors gros titre : les plus importants."""
+    lead, news, _ = _sheet_news(edition)
+    return news[:max(0, SHEET_FRONT_NEWS - (1 if lead else 0))]
+
+
+def _sheet_front_watch(edition: MorningEdition) -> list[NewsItem]:
+    """L'article de veille developpe en une : le premier du classement."""
+    ranked = _sheet_ranked(list(edition.tech_news))
+    ai, dev = _sheet_watch(edition)
+    return [item for item in ranked if item in ai or item in dev][:1]
 
 
 def _page_sheet_front(edition: MorningEdition) -> str:
-    """Recto de l'edition une feuille : l'essentiel du jour, les marches, l'agenda, le bandeau."""
-    lead = edition.news.lead
-    news, _ = _sheet_news(edition)
-    front_news = news[:max(0, SHEET_FRONT_NEWS - (1 if lead else 0))]
-    day = "".join(filter(None, [
+    """Recto de l'edition une feuille, dispose comme la une classique :
+    colonne de service a gauche, actualite a droite, bandeau en bas."""
+    lead, _, _ = _sheet_news(edition)
+    front = _sheet_front_news(edition)
+    second, more = front[:1], front[1:2]
+    watch = _sheet_front_watch(edition)
+    left = "".join(filter(None, [
+        weather_block(edition),
         _sheet_agenda(edition.agenda),
-        task_list("Priorites", edition.priorities, 4),
+        task_list("Priorites", edition.priorities, 3),
         task_list("A ne pas oublier", edition.reminders, 3),
+        _sheet_markets(edition.markets),
     ]))
-    main = ""
+
+    def single(title: str, items: list[NewsItem]) -> str:
+        """Un seul article, developpe sur toute la largeur."""
+        if not items:
+            return ""
+        return (
+            f'<section class="sheet-single">{section_header(title)}'
+            f'{_sheet_card(items[0], SHEET_LONG_LIMIT)}</section>'
+        )
+
+    right = ""
     if lead:
-        main += f"""
+        right += f"""
         <article class="news-lead sheet-lead">
+          <p class="article-meta">{_source_line(lead)}</p>
           <h2>{_e(lead.title)}</h2>
-          <p class="standfirst">{_e(_mini_article(lead.expanded_summary or lead.summary, 420))}</p>
-          {_sheet_byline(lead)}
+          <p class="standfirst">{_e(_mini_article(lead.expanded_summary or lead.summary, SHEET_LONG_LIMIT))}</p>
         </article>
         """
-    main += _sheet_zone("", front_news, slug="main", columns=2, limit=SHEET_FRONT_LIMIT)
-    if day:
-        main += f'<div class="sheet-day">{day}</div>'
-    if not main:
-        main = '<p class="empty-state">Aucune actualite disponible : aucun flux n\'a pu etre lu et aucun article n\'est invente.</p>'
-    markets = market_table(edition.markets)
-    if markets and edition.market_news:
-        markets += _sheet_item(min(edition.market_news, key=_sheet_weight))
-    aside = _sheet_zone("Marches", [], markets, slug="aside") if markets else ""
-    body = f'<div class="sheet-body"><div class="sheet-main">{main}</div>{aside}</div>'
-    header = (
-        f'<header class="sheet-date"><h1>{_e(_sheet_date(edition))}</h1>'
-        f'{_sheet_weather(edition)}</header>'
+    right += single("A retenir", second)
+    # Deux blocs cote a cote, comme sur la une classique.
+    lower = "".join(
+        f'<section>{section_header(title)}{_sheet_card(item, 300)}</section>'
+        for title, item in (
+            ("A lire aussi", more[0] if more else None),
+            ("Bourse & crypto",
+             min(edition.market_news, key=_sheet_weight) if edition.market_news else None),
+        ) if item
+    )
+    if lower:
+        right += f'<div class="front-lower sheet-lower">{lower}</div>'
+    # Un article de veille en une ; les autres sont au verso.
+    right += single("Veille", watch)
+    if not right:
+        right = '<p class="empty-state">Aucune actualite disponible : aucun flux n\'a pu etre lu et aucun article n\'est invente.</p>'
+    # Chaque colonne laisse de cote, en entier, le dernier bloc qui ne tiendrait pas.
+    grid = (
+        f'<div class="briefing-grid sheet-front-grid"><div class="sheet-flow">{left}</div>'
+        f'<div class="sheet-flow">{right}</div></div>'
+        if left else f'<div class="sheet-front-grid"><div class="sheet-flow">{right}</div></div>'
     )
     return _page(
         edition, 1, "Actualites",
-        f'<div class="sheet-front">{body}{_sheet_band(edition)}</div>',
-        slug="front", header=header,
+        f'<div class="sheet-front">{grid}{_sheet_band(edition)}</div>',
+        slug="front", header=_sheet_masthead(edition),
     )
 
 
 def _page_sheet_back(edition: MorningEdition, number: int) -> str:
     """Verso de l'edition une feuille : la suite des articles, sans titre de rubrique."""
-    lead = edition.news.lead
-    news, culture = _sheet_news(edition)
-    rest = news[max(0, SHEET_FRONT_NEWS - (1 if lead else 0)):]
-    seen: set[str] = set()
-    ai = _sheet_pick(
-        [[item for item in edition.tech_news if item.category.casefold() in SHEET_AI_CATEGORIES]],
-        SHEET_WATCH_COUNT, seen,
-    )
-    dev = _sheet_pick(
-        [[item for item in edition.tech_news if item.category.casefold() not in SHEET_AI_CATEGORIES]],
-        SHEET_WATCH_COUNT, seen,
-    )
+    _, news, culture = _sheet_news(edition)
+    shown_news = {item.title for item in _sheet_front_news(edition)}
+    rest = [item for item in news if item.title not in shown_news]
+    ai, dev = _sheet_watch(edition)
+    shown = {item.title for item in _sheet_front_watch(edition)}
+    ai = [item for item in ai if item.title not in shown]
+    dev = [item for item in dev if item.title not in shown]
     # Un seul flux sur trois colonnes : chaque colonne se remplit avant la suivante,
     # et seuls les derniers articles sautent si la page est pleine.
     cards = "".join(
