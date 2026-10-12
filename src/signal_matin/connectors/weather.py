@@ -6,7 +6,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from ..models import DataSourceStatus, DataState, WeatherBlock
+from ..models import DataSourceStatus, DataState, WeatherBlock, WeatherDay
 
 _CODES = {
     0: "Ciel degage", 1: "Peu nuageux", 2: "Partiellement nuageux",
@@ -24,6 +24,24 @@ def _json(url: str) -> dict[str, Any]:
         return json.load(response)
 
 
+def _forecast(daily: dict[str, Any]) -> list[WeatherDay]:
+    """Les jours suivants ; une ligne illisible est ignoree sans bloquer la meteo du jour."""
+    days: list[WeatherDay] = []
+    for index, date in enumerate((daily.get("time") or [])[1:6], start=1):
+        try:
+            rain = (daily.get("precipitation_probability_max") or [])[index]
+            days.append(WeatherDay(
+                date=date,
+                condition=_CODES.get(int(daily["weather_code"][index]), "Temps variable"),
+                low_c=round(float(daily["temperature_2m_min"][index])),
+                high_c=round(float(daily["temperature_2m_max"][index])),
+                rain_pct=float(rain) if rain is not None else None,
+            ))
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+    return days
+
+
 def collect_weather(config: dict) -> tuple[WeatherBlock | None, DataSourceStatus]:
     location = str(config.get("location") or "").strip()
     latitude = config.get("latitude")
@@ -37,8 +55,8 @@ def collect_weather(config: dict) -> tuple[WeatherBlock | None, DataSourceStatus
         "latitude": latitude,
         "longitude": longitude,
         "current": "temperature_2m,weather_code,wind_speed_10m",
-        "daily": "temperature_2m_min,temperature_2m_max",
-        "forecast_days": 1,
+        "daily": "weather_code,temperature_2m_min,temperature_2m_max,precipitation_probability_max",
+        "forecast_days": 6,
         "timezone": "auto",
     })
     try:
@@ -50,6 +68,7 @@ def collect_weather(config: dict) -> tuple[WeatherBlock | None, DataSourceStatus
         wind = round(float(current.get("wind_speed_10m", 0)))
         low = (daily.get("temperature_2m_min") or [None])[0]
         high = (daily.get("temperature_2m_max") or [None])[0]
+        forecast = _forecast(daily)
         wet = any(word in condition.lower() for word in ("pluie", "averse", "bruine", "orage"))
         block = WeatherBlock(
             location=location or "Position configuree",
@@ -60,6 +79,7 @@ def collect_weather(config: dict) -> tuple[WeatherBlock | None, DataSourceStatus
             wind_kmh=wind,
             summary=f"{condition}, avec un vent autour de {wind} km/h.",
             advice="Prevois de quoi rester au sec." if wet else "Conditions calmes pour commencer la journee.",
+            forecast=forecast,
         )
         return block, DataSourceStatus(
             name="Meteo", state=DataState.LIVE, detail="Open-Meteo", item_count=1,

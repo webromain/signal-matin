@@ -73,20 +73,22 @@ def _ereader_paths(
 
 
 def _edition(args, config: dict):
+    # Sans --mode explicite, le format par defaut vient de config.yaml.
+    mode = args.mode if args.mode != "auto" else str(config.get("mode") or "auto")
     if args.input:
-        return charger_edition(Path(args.input), mode=args.mode)
+        return charger_edition(Path(args.input), mode=mode)
     demo = args.demo or (not args.live and bool(config.get("demo", not config)))
     if demo:
-        return normaliser_edition(construire_demo(args.date), mode=args.mode)
+        return normaliser_edition(construire_demo(args.date), mode=mode)
     now = dt.datetime.combine(args.date, dt.datetime.now().astimezone().timetz())
-    return build_live(config, now=now, mode=args.mode)
+    return build_live(config, now=now, mode=mode)
 
 
 def _common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", default="config.yaml", help="fichier YAML local")
     parser.add_argument("--input", help="edition JSON deja normalisee")
     parser.add_argument("--date", type=_date, default=dt.date.today())
-    parser.add_argument("--mode", choices=("auto", "compact", "standard", "extended"), default="auto")
+    parser.add_argument("--mode", choices=("auto", "sheet", "compact", "standard", "extended"), default="auto")
     parser.add_argument("--output", default="", help="chemin de sortie personnalisé")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--demo", action="store_true", help="force les donnees fictives")
@@ -123,7 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve = sub.add_parser(
         "serve", help="publie l'édition liseuse sur une page privée du réseau local")
     serve.add_argument("--config", default="config.yaml", help="fichier YAML local")
-    serve.add_argument("--mode", choices=("auto", "compact", "standard", "extended"), default="auto")
+    serve.add_argument("--mode", choices=("auto", "sheet", "compact", "standard", "extended"), default="auto")
     group = serve.add_mutually_exclusive_group()
     group.add_argument("--demo", action="store_true", help="force les données fictives")
     group.add_argument("--live", action="store_true", help="force les connecteurs configurés")

@@ -1,0 +1,17 @@
+.git
+.venv
+venv
+output
+tmp
+tests
+docs
+__pycache__
+*.py[cod]
+.pytest_cache
+# Jamais de donnees personnelles dans l'image : elles sont montees au lancement.
+.env
+config.yaml
+credentials*.json
+token*.json
+client_secret*.json
+*.ics
