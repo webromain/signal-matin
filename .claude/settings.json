@@ -1,0 +1,52 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.env.*.local)",
+      "Read(**/.env)",
+      "Read(./.idea/workspace.xml)",
+      "Read(./.idea/dataSources*.xml)",
+      "Read(~/.netrc)",
+      "Read(./credentials*.json)",
+      "Read(./token*.json)",
+      "Read(./client_secret*.json)",
+      "Read(**/.access-token)",
+      "Read(**/.pairing-code.json)",
+      "Edit(./.env)",
+      "Edit(./.idea/workspace.xml)",
+      "Edit(./credentials*.json)",
+      "Edit(./token*.json)",
+      "Edit(./client_secret*.json)",
+      "Bash(*.env)",
+      "Bash(*.env *)",
+      "Bash(*credentials*.json*)",
+      "Bash(*token*.json*)",
+      "Bash(*client_secret*.json*)",
+      "Bash(*.access-token*)",
+      "Bash(*.pairing-code.json*)",
+      "Bash(*workspace.xml*)",
+      "Bash(*.netrc*)",
+      "Bash(env)",
+      "Bash(printenv*)",
+      "Bash(git commit*)",
+      "Bash(git * commit*)",
+      "Bash(git push*)",
+      "Bash(git * push*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop.sh",
+            "timeout": 10,
+            "statusMessage": "Vérifications de fin de réponse…"
+          }
+        ]
+      }
+    ]
+  }
+}

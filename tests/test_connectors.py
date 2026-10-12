@@ -87,3 +87,58 @@ def test_article_page_decoding_follows_declared_charset():
     assert "réunit des outils d'entraînement" in decode_page(latin)
     assert "déployé" in decode_page("<p>déployé</p>".encode("utf-8"))
     assert "accélérer" in decode_page("<p>accélérer</p>".encode("cp1252"), "utf-8")
+
+
+QUOTE_RSS = """<?xml version="1.0" encoding="UTF-8"?><rss><channel>
+<item><title>Une citation abregee... — Auteur Fictif</title>
+<pubDate>{date}</pubDate>
+<description>{text} — Auteur Fictif, Oeuvre de test</description></item>
+<item><title>Citation de la veille — Autre</title>
+<description>Citation de la veille. — Autre</description></item>
+</channel></rss>"""
+
+
+def _quote_feed(monkeypatch, text, date="Sat, 26 Sep 2026 00:05:00 +0000"):
+    payload = QUOTE_RSS.format(text=text, date=date).encode("utf-8")
+    monkeypatch.setattr("signal_matin.connectors.quote._payload", lambda _url: payload)
+
+
+def test_daily_quote_is_read_from_feed(monkeypatch):
+    from signal_matin.connectors.quote import collect_quote
+
+    _quote_feed(monkeypatch, "Une citation fictive — avec un tiret — pour le test.")
+    now = dt.datetime(2026, 9, 26, 8, tzinfo=dt.timezone.utc)
+    quote, status = collect_quote("https://example.org/rss", now)
+    assert quote.text == "Une citation fictive — avec un tiret — pour le test."
+    assert quote.author == "Auteur Fictif, Oeuvre de test"
+    assert status.state == DataState.LIVE
+
+
+def test_daily_quote_too_long_or_stale_is_refused(monkeypatch):
+    from signal_matin.connectors.quote import collect_quote
+
+    now = dt.datetime(2026, 9, 26, 8, tzinfo=dt.timezone.utc)
+    _quote_feed(monkeypatch, "mot " * 60)
+    assert collect_quote("https://example.org/rss", now)[0] is None
+    _quote_feed(monkeypatch, "Citation courte.", date="Mon, 21 Sep 2026 00:05:00 +0000")
+    quote, status = collect_quote("https://example.org/rss", now)
+    assert quote is None and status.state == DataState.UNAVAILABLE
+
+
+def test_pipeline_falls_back_to_configured_quotes(monkeypatch):
+    from signal_matin import pipeline
+
+    def offline(_url):
+        raise OSError("hors ligne")
+
+    monkeypatch.setattr("signal_matin.connectors.quote._payload", offline)
+    config = {
+        "modules": {name: False for name in (
+            "weather", "calendar", "tasks", "news", "tech", "rss", "markets")},
+        "personal": {
+            "quote_feed": "https://example.org/rss",
+            "quotes": [{"text": "Citation de secours.", "author": "Auteur de secours"}],
+        },
+    }
+    edition = pipeline.build_live(config, now=dt.datetime(2026, 9, 26, 8, tzinfo=dt.timezone.utc))
+    assert edition.extras.quote.text == "Citation de secours."

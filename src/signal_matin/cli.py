@@ -25,6 +25,7 @@ from .pdf import generer_pdf
 from .pipeline import build_live
 from .printer import print_pdf
 from .renderer import write_html
+from .telegram import send_pdf
 
 
 def _date(value: str) -> dt.date:
@@ -256,6 +257,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"PDF genere: {pdf_path}")
     print(f"Preview: {html_path}")
     print(f"JSON: {data_path}")
+    telegram = setting(config, "telegram", {}) or {}
+    if telegram.get("enabled"):
+        try:
+            send_pdf(telegram, pdf_path, caption=f"Signal Matin du {args.date:%d/%m/%Y}")
+        except RuntimeError as error:
+            print(error, file=sys.stderr)
+            return 1
+        print("PDF envoye sur Telegram.")
     return 0
 
 

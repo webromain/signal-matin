@@ -566,7 +566,7 @@ footer { position: absolute; left: 11mm; right: 11mm; bottom: 6mm; display: flex
 .sheet-band .band-answer { font: italic 6.4pt var(--serif); color: var(--muted); transform: rotate(180deg); text-align: right; margin-top: 4mm; }
 .sheet-band blockquote { margin: 1.4mm 0 1mm; font: italic 8.6pt/1.3 var(--serif); }
 .sheet-band .band-author { font: 6.4pt var(--sans); color: var(--muted); }
-.band-quote { grid-column: span 1; }
+.band-quote { grid-column: span 2; }
 .sheet-day { flex: none; margin-top: 4mm; }
 .sheet-day > section { margin: 0; }
 .sheet-day .timeline { columns: 2; column-gap: 7mm; margin-bottom: 0; }
