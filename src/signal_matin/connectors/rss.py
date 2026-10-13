@@ -106,11 +106,12 @@ def collect_rss(
                     continue
                 seen.add(key)
                 summary = _plain(_text(node, {"description", "summary", "content"}))
+                # Un resume plus long que le modele ne l'accepte ferait rejeter tout le flux.
                 bucket.append(NewsItem(
-                    title=title,
+                    title=title[:240],
                     category=category,
-                    summary=summary or "Resume non fourni par le flux.",
-                    expanded_summary=summary,
+                    summary=summary[:1600] or "Resume non fourni par le flux.",
+                    expanded_summary=summary[:3200],
                     source=SourceRef(name=name, url=link, published_at=published),
                 ))
                 if len(bucket) >= per_feed:

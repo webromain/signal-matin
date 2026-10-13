@@ -42,9 +42,18 @@ config.yaml  ->  connecteurs  ->  édition (JSON)  ->  mise en page HTML/CSS  ->
 2. **Le texte des articles** : les flux ne donnent qu'une à trois phrases. Le
    journal va donc lire le début de l'article sur le site du média quand celui-ci
    le permet. Le Monde le refuse ; ses articles gardent le résumé du flux.
-3. **Le classement** : un sujet traité par plusieurs médias le même jour est jugé
-   plus important, et monte en une. Chaque sujet n'apparaît qu'une fois, dans sa
-   version la plus fournie. C'est une estimation, pas un jugement éditorial.
+3. **Le choix des articles** (`src/signal_matin/selection.py`) :
+   - *doublons* : deux articles de flux différents qui racontent le même fait ne
+     sont imprimés qu'une fois, dans leur version la plus fournie, y compris d'une
+     rubrique à l'autre (actualité, culture, veille, bourse) ;
+   - *importance* : un sujet traité par plusieurs médias le même jour monte en une ;
+   - *mémoire de la veille* : ce qui a été imprimé la veille passe en dernier, et le
+     gros titre change de sujet d'un jour à l'autre quand un autre candidat existe.
+     Cette mémoire est relue dans le fichier de la veille, dans `output/data/` :
+     supprimer ce dossier la remet à zéro.
+
+   Les articles sont comparés par leurs mots, sans comprendre le texte : c'est une
+   estimation, pas un jugement éditorial.
 4. **La mise en page** (`src/signal_matin/renderer.py` et `web/signal_matin.css`)
    compose les deux pages, puis Chromium en fait un PDF.
 
@@ -62,7 +71,8 @@ Une source en panne ne bloque rien : sa rubrique disparaît et le reste est gén
 | La citation du jour | `config.yaml` | `personal.quote_feed` (flux RSS) ; `personal.quotes` sert de secours |
 | L'envoi sur Telegram | `config.yaml` et `.env` | `telegram.enabled` ; jeton et identifiant du chat dans `.env` |
 | L'agenda Google lu | `config.yaml` | `calendar.google.calendar_id` |
-| Le nombre d'articles par zone | `src/signal_matin/renderer.py` | constantes `SHEET_…` en haut du bloc « une feuille » |
+| Le nombre d'articles par zone | `src/signal_matin/selection.py` | constantes `SHEET_…` en haut du fichier |
+| La sévérité de la chasse aux doublons | `src/signal_matin/selection.py` | `SIMILARITY_STRONG` et `SIMILARITY_WEAK` (plus bas = plus de regroupements) |
 | Les tailles, polices, espacements | `web/signal_matin.css` | bloc « Edition une feuille » |
 
 Le fichier `web/signal_matin.css` a un jumeau, `src/signal_matin/assets/signal_matin.css` :
@@ -256,7 +266,7 @@ Pour annuler une fusion déjà terminée : `git reset --hard avant-maj`.
 Les conflits sont les plus probables dans `src/signal_matin/renderer.py`,
 `src/signal_matin/pipeline.py`, `src/signal_matin/models.py` et les deux feuilles
 de style, où mon code est inséré au milieu de celui de l'auteur. Les fichiers
-entièrement à moi ne peuvent pas en avoir : `connectors/markets.py`,
+entièrement à moi ne peuvent pas en avoir : `selection.py`, `connectors/markets.py`,
 `connectors/article.py`, `connectors/quote.py`, `telegram.py`, `Dockerfile`, `compose.yaml`, `config.perso.yaml` et ce guide.
 
 ### À ne pas faire
@@ -273,7 +283,8 @@ entièrement à moi ne peuvent pas en avoir : `connectors/markets.py`,
 - un format `sheet` (une feuille recto verso), avec sa propre mise en page ;
 - les cours de marché (`connectors/markets.py`) ;
 - la lecture du début des articles sur le site des médias (`connectors/article.py`) ;
-- le classement des articles par importance ;
+- le choix des articles : doublons entre flux, importance, mémoire de la veille
+  (`selection.py`) ;
 - la météo à 5 jours ;
 - une citation du jour lue dans un flux RSS (`connectors/quote.py`), avec une liste
   de secours dans `personal.quotes` ;
