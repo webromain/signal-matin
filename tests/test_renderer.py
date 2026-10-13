@@ -162,25 +162,16 @@ def test_delayed_print_reuses_real_task_action():
     assert "Start-ScheduledTask -TaskName $TacheSource" not in script
 
 
-def test_sheet_ranking_puts_multi_source_story_first():
-    from signal_matin.renderer import _sheet_ranked
+def test_sheet_texts_shrink_so_that_every_block_fits():
+    from signal_matin.renderer import SHEET_BACK_LIMIT, SHEET_LONG_LIMIT, _back_limit, _front_limits
 
     base = construire_demo(dt.date(2026, 9, 26)).tech_news[0]
+    short = base.model_copy(update={"title": "Titre court", "expanded_summary": "Phrase. " * 150})
+    long_title = short.model_copy(update={"title": "Un titre vraiment tres long " * 7})
 
-    def article(title, source, summary="Resume."):
-        return base.model_copy(update={
-            "title": title, "summary": summary, "expanded_summary": summary,
-            "source": base.source.model_copy(update={"name": source}),
-        })
-
-    items = [
-        article("Donald Trump annonce une nouvelle taxe sur l'acier", "A"),
-        article("Un eleve ouvre le feu dans un college d'Aubagne, deux blesses", "B"),
-        article("Tribune : Donald Trump et le cinema americain", "C"),
-        article("College d'Aubagne : un suspect interpelle, deux blesses", "D", "Recit complet. " * 20),
-    ]
-    ranked = _sheet_ranked(items)
-    # Le sujet traite par deux medias passe devant, dans sa version la plus fournie,
-    # et deux articles qui ne partagent qu'un nom propre restent distincts.
-    assert ranked[0].source.name == "D"
-    assert len(ranked) == 3
+    # Un jour ordinaire, rien n'est raccourci ; un gros titre long rogne les textes.
+    assert _front_limits(short, [short], [short])[0] == SHEET_LONG_LIMIT
+    lead_limit, single_limit, _ = _front_limits(long_title, [short, short], [short, short])
+    assert lead_limit < SHEET_LONG_LIMIT and single_limit < SHEET_LONG_LIMIT
+    assert _back_limit([short] * 6) == SHEET_BACK_LIMIT
+    assert _back_limit([long_title] * 10) < SHEET_BACK_LIMIT

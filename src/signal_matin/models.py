@@ -264,6 +264,14 @@ class MarketGroup(Modele):
     quotes: list[MarketQuote] = Field(default_factory=list, max_length=12)
 
 
+class PrintedRecord(Modele):
+    """Ce qu'une edition une feuille a imprime, pour ne pas le repeter le lendemain."""
+
+    lead_title: str = Field(default="", max_length=240)
+    lead_text: str = Field(default="", max_length=1600)
+    urls: list[str] = Field(default_factory=list, max_length=60)
+
+
 class MorningEdition(Modele):
     schema_version: Literal["1.0"] = "1.0"
     generated_at: dt.datetime
@@ -287,6 +295,9 @@ class MorningEdition(Modele):
     recommendations: list[Recommendation] = Field(default_factory=list, max_length=12)
     markets: list[MarketGroup] = Field(default_factory=list, max_length=10)
     market_news: list[NewsItem] = Field(default_factory=list, max_length=8)
+    # Memoire de l'edition une feuille : ce que la veille a imprime, et ce que celle-ci imprime.
+    previous: PrintedRecord | None = None
+    printed: PrintedRecord | None = None
     personal: PersonalBlock = Field(default_factory=PersonalBlock)
     extras: Extras = Field(default_factory=Extras)
     learning: LearningPage = Field(default_factory=LearningPage)

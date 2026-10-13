@@ -12,11 +12,12 @@ from .connectors import (
 )
 from .daily_learning import construire_apprentissage_du_jour
 from .models import (
-    DataSourceStatus, DataState, DigestItem, EditionMeta, Extras, Importance,
+    DataSourceStatus, DataState, DensityMode, DigestItem, EditionMeta, Extras, Importance,
     LearningPage, MorningEdition, NewsBundle, NewsItem, PersonalBlock, QuoteBlock,
     Recommendation, SourceRef,
 )
 from .normalizer import normaliser_edition
+from .selection import remember
 
 
 def _enabled(config: dict, name: str, default: bool = True) -> bool:
@@ -196,4 +197,7 @@ def build_live(
                   if _enabled(config, "games") or _enabled(config, "tech_vocabulary")
                   else LearningPage()),
     )
-    return normaliser_edition(edition, mode=mode)
+    edition = normaliser_edition(edition, mode=mode)
+    if edition.edition.density == DensityMode.SHEET:
+        edition = remember(edition, root / "output" / "data")
+    return edition

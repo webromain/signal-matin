@@ -142,3 +142,93 @@ def test_pipeline_falls_back_to_configured_quotes(monkeypatch):
     }
     edition = pipeline.build_live(config, now=dt.datetime(2026, 9, 26, 8, tzinfo=dt.timezone.utc))
     assert edition.extras.quote.text == "Citation de secours."
+
+
+def test_article_fetch_refuses_internal_addresses(monkeypatch):
+    import pytest
+
+    from signal_matin.connectors import article
+
+    for url in (
+        "http://127.0.0.1:5678/", "http://localhost/admin", "http://192.168.1.1/",
+        "http://10.0.0.5/", "http://169.254.169.254/latest/meta-data/", "http://[::1]/",
+        "ftp://exemple.org/fichier", "file:///etc/hostname",
+    ):
+        with pytest.raises(ValueError):
+            article.require_public(url)
+    article.require_public("https://93.184.216.34/article")
+
+    # Un article dont le lien est interne garde simplement le resume de son flux.
+    def forbidden(*args, **kwargs):
+        raise AssertionError("aucune requete ne doit partir")
+
+    monkeypatch.setattr(article._OPENER, "open", forbidden)
+    assert article.enrich_articles([]) == []
+    with pytest.raises(ValueError):
+        article._fetch("http://127.0.0.1:5678/")
+
+    # Une redirection vers une adresse interne est refusee elle aussi.
+    request = article.urllib.request.Request("https://93.184.216.34/")
+    with pytest.raises(ValueError):
+        article._PublicRedirects().redirect_request(
+            request, None, 302, "Found", {}, "http://127.0.0.1:5678/")
+
+
+def test_rss_keeps_a_feed_whose_summary_is_longer_than_the_model_allows(monkeypatch):
+    from signal_matin.connectors import rss
+
+    now = dt.datetime(2026, 9, 26, 8, tzinfo=dt.timezone.utc)
+    feed = (
+        "<rss><channel><item><title>Article fleuve</title>"
+        "<link>https://exemple.org/fleuve</link>"
+        "<pubDate>Sat, 26 Sep 2026 07:00:00 GMT</pubDate>"
+        f"<description>{'Phrase tres longue. ' * 200}</description></item></channel></rss>"
+    ).encode()
+    monkeypatch.setattr(rss, "_payload", lambda url: feed)
+    items, status = rss.collect_rss(
+        [{"name": "Media", "category": "Dev", "url": "https://exemple.org/rss"}], now)
+    assert status.item_count == 1
+    assert 1500 < len(items[0].summary) <= 1600 and 3100 < len(items[0].expanded_summary) <= 3200
+
+
+def test_article_connection_goes_to_the_address_that_was_checked(monkeypatch):
+    import socket
+
+    import pytest
+
+    from signal_matin.connectors import article
+
+    answers = iter(["93.184.216.34", "127.0.0.1"])
+
+    def rebinding(host, port=None, **kwargs):
+        # Un DNS piege : adresse publique au premier appel, interne au second.
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (next(answers), port or 0))]
+
+    opened = []
+    monkeypatch.setattr(article.socket, "getaddrinfo", rebinding)
+    monkeypatch.setattr(
+        article.socket, "create_connection",
+        lambda address, *args, **kwargs: opened.append(address) or "socket")
+
+    # La connexion part vers l'adresse verifiee, sans redemander son adresse au nom.
+    assert article._connect_public(("piege.exemple", 443), 8) == "socket"
+    assert opened == [("93.184.216.34", 443)]
+    # Au tour suivant le nom designe la machine locale : aucune connexion n'est ouverte.
+    with pytest.raises(ValueError):
+        article._connect_public(("piege.exemple", 443), 8)
+    assert len(opened) == 1
+
+
+def test_article_connections_are_pinned_unless_a_proxy_is_configured(monkeypatch):
+    from signal_matin.connectors import article
+
+    def handlers(opener):
+        return {type(handler).__name__ for handler in opener.handlers}
+
+    monkeypatch.setattr(article.urllib.request, "getproxies", lambda: {})
+    assert {"_PublicHTTP", "_PublicHTTPS", "_PublicRedirects"} <= handlers(article._opener())
+    assert not {"HTTPHandler", "HTTPSHandler", "HTTPRedirectHandler"} & handlers(article._opener())
+    monkeypatch.setattr(
+        article.urllib.request, "getproxies", lambda: {"https": "http://proxy.exemple:3128"})
+    assert "_PublicHTTPS" not in handlers(article._opener())
+    assert "_PublicRedirects" in handlers(article._opener())

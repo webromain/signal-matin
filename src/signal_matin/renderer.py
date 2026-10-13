@@ -10,13 +10,13 @@ import datetime as dt
 import html
 import mimetypes
 import re
-import unicodedata
 from pathlib import Path
 
 from .models import (
     AgendaItem, DensityMode, DigestItem, MarketGroup, MarketQuote,
     MorningEdition, NewsItem, Recommendation, TaskItem,
 )
+from .selection import plan_sheet
 
 ROOT = Path(__file__).resolve().parents[2]
 PROJECT_CSS_PATH = ROOT / "web" / "signal_matin.css"
@@ -939,17 +939,11 @@ def _page_standard_tail(edition: MorningEdition, number: int) -> str:
     return _page(edition, number, "Journee & liens", body, slug="standard-tail")
 
 
-# Nombre d'articles de l'edition une feuille : peu, pour laisser respirer la page.
-SHEET_NEWS_COUNT = 5      # France & monde, gros titre compris
-SHEET_FRONT_NEWS = 3      # dont ceux du recto ; le reste ouvre le verso
+# Longueurs de texte de l'edition une feuille ; le nombre d'articles est dans selection.py.
 SHEET_LONG_LIMIT = 620     # gros titre et articles developpes du recto
-SHEET_CULTURE_COUNT = 3   # culture & sciences
-SHEET_WATCH_COUNT = 3     # par colonne de veille (IA, puis dev)
 SHEET_ARTICLE_LIMIT = 360
 SHEET_FRONT_LIMIT = 300    # au recto, plus court pour laisser de la place a l'agenda
 SHEET_BACK_LIMIT = 300     # au verso, plus court pour loger jeux et previsions
-SHEET_CULTURE_CATEGORIES = {"science", "sciences", "culture"}
-SHEET_AI_CATEGORIES = {"ia", "ai", "data", "data science", "intelligence artificielle"}
 SHEET_EMPTY_SUMMARIES = {"comments", "commentaires", "resume non fourni par le flux."}
 # Formules ajoutees par les flux eux-memes, sans interet a l'impression.
 SHEET_FEED_NOISE = (
@@ -1027,20 +1021,6 @@ def _sheet_zone(
         f'<section class="sheet-zone{f" sheet-zone-{slug}" if slug else ""}">'
         f'{section_header(title) if title else ""}{body}</section>'
     )
-
-
-def _sheet_pick(groups: list[list[NewsItem]], count: int, seen: set[str]) -> list[NewsItem]:
-    """Alterne entre les rubriques pour ne pas en laisser une seule remplir la page."""
-    picked: list[NewsItem] = []
-    queues = [list(group) for group in groups]
-    while len(picked) < count and any(queues):
-        for queue in queues:
-            while queue and queue[0].title.casefold() in seen:
-                queue.pop(0)
-            if queue and len(picked) < count:
-                seen.add(queue[0].title.casefold())
-                picked.append(queue.pop(0))
-    return picked
 
 
 def _fr_number(value: float, decimals: int | None = None) -> str:
@@ -1172,74 +1152,6 @@ def _sheet_forecast(edition: MorningEdition) -> str:
     )
 
 
-_RANK_STOPWORDS = {
-    "pour", "dans", "avec", "sans", "plus", "moins", "apres", "avant", "entre", "contre",
-    "leur", "leurs", "cette", "sont", "etre", "fait", "tout", "tous", "comme", "face",
-    "deux", "trois", "selon", "quand", "comment", "pourquoi", "direct", "that", "with",
-    "from", "this", "have", "what", "will", "your", "about", "into", "their", "more",
-}
-
-
-def _rank_keywords(title: str) -> set[str]:
-    plain = unicodedata.normalize("NFKD", title.casefold()).encode("ascii", "ignore").decode()
-    # Six premieres lettres : « lyceen » et « lyceennes » comptent pour le meme mot.
-    return {word[:6] for word in re.findall(r"[a-z0-9]{4,}", plain) if word not in _RANK_STOPWORDS}
-
-
-def _same_story(first: set[str], second: set[str]) -> bool:
-    """Meme sujet si les titres partagent trois mots-cles, ou deux qui pesent lourd.
-
-    Deux mots communs ne suffisent pas toujours : « Donald Trump » rapprocherait
-    des articles sans rapport.
-    """
-    shared = len(first & second)
-    return shared >= 3 or (shared >= 2 and shared / max(1, len(first | second)) >= 0.3)
-
-
-def _sheet_ranked(items: list[NewsItem], headline: NewsItem | None = None) -> list[NewsItem]:
-    """Classe les articles du plus au moins important, un seul par sujet.
-
-    Sans comprendre le texte, deux indices mesurent l'importance : un sujet repris par
-    plusieurs medias le meme jour, et la place que chaque media lui donne dans son flux.
-    Chaque sujet est represente par sa version la plus fournie.
-    """
-    keywords = [_rank_keywords(item.title) for item in items]
-    clusters: list[list[int]] = []
-    for index in range(len(items)):
-        for cluster in clusters:
-            if any(_same_story(keywords[index], keywords[other]) for other in cluster):
-                cluster.append(index)
-                break
-        else:
-            clusters.append([index])
-    scored = []
-    for cluster in clusters:
-        sources = {items[index].source.name for index in cluster}
-        score = 3 * (len(sources) - 1) + (1 - cluster[0] / max(1, len(items)))
-        if headline is not None and any(items[index] is headline for index in cluster):
-            score += 1.5
-        best = max(cluster, key=lambda index: (_sheet_text_length(items[index]), -index))
-        scored.append((score, -cluster[0], items[best]))
-    scored.sort(key=lambda entry: entry[:2], reverse=True)
-    return [item for _, _, item in scored]
-
-
-def _sheet_news(edition: MorningEdition) -> tuple[NewsItem | None, list[NewsItem], list[NewsItem]]:
-    """Gros titre, puis articles France & monde par importance, puis culture & sciences."""
-    bundle = edition.news
-    pool = _sheet_pick([bundle.france, bundle.world, bundle.economy, bundle.society], 48, set())
-    headline = bundle.lead
-    if headline and headline.category.casefold() not in SHEET_CULTURE_CATEGORIES:
-        pool.insert(0, headline)
-    ranked = _sheet_ranked(pool, headline)[:SHEET_NEWS_COUNT]
-    seen = {item.title.casefold() for item in ranked}
-    culture_pool = [bundle.culture, bundle.science]
-    if headline and headline not in pool:
-        culture_pool.insert(0, [headline])
-    culture = _sheet_pick(culture_pool, SHEET_CULTURE_COUNT, seen)
-    return (ranked[0] if ranked else None), ranked[1:], culture
-
-
 def _sheet_masthead(edition: MorningEdition) -> str:
     """Meme bandeau que la une classique, la date remplacant le nom du journal."""
     meta = edition.edition
@@ -1277,38 +1189,64 @@ def _sheet_markets(groups: list[MarketGroup]) -> str:
     return f'<section class="sheet-markets">{section_header("Marches")}{table}</section>' if table else ""
 
 
-def _sheet_watch(edition: MorningEdition) -> tuple[list[NewsItem], list[NewsItem]]:
-    """Articles de veille retenus, par importance : IA & data d'un cote, dev de l'autre."""
-    ranked = _sheet_ranked(list(edition.tech_news))
-    ai = [item for item in ranked if item.category.casefold() in SHEET_AI_CATEGORIES]
-    dev = [item for item in ranked if item.category.casefold() not in SHEET_AI_CATEGORIES]
-    return ai[:SHEET_WATCH_COUNT], dev[:SHEET_WATCH_COUNT]
+# Hauteurs de la colonne d'articles du recto, en pixels CSS, mesurees dans Chromium.
+# Elles servent a raccourcir les textes avant la mise en page, pour que les quatre
+# blocs tiennent meme un jour de gros titre long ; elles suivent la feuille de style.
+SHEET_COLUMN_HEIGHT = 775 - 14   # 205 mm, moins une marge d'erreur
+SHEET_BLOCK_GAPS = 36
 
 
-def _sheet_text_length(item: NewsItem) -> int:
-    return len(_mini_article(item.expanded_summary or item.summary, SHEET_LONG_LIMIT))
+def _rows(length: int, per_row: int) -> int:
+    return -(-length // per_row) if length else 0
 
 
-def _sheet_front_news(edition: MorningEdition) -> list[NewsItem]:
-    """Articles France & monde du recto, hors gros titre : les plus importants."""
-    lead, news, _ = _sheet_news(edition)
-    return news[:max(0, SHEET_FRONT_NEWS - (1 if lead else 0))]
+def _lead_height(item: NewsItem, limit: int) -> float:
+    text = _mini_article(item.expanded_summary or item.summary, limit)
+    return 34 + 30.1 * _rows(len(item.title), 40) + 17 * _rows(len(text), 92)
 
 
-def _sheet_front_watch(edition: MorningEdition) -> list[NewsItem]:
-    """L'article de veille developpe en une : le premier du classement."""
-    ranked = _sheet_ranked(list(edition.tech_news))
-    ai, dev = _sheet_watch(edition)
-    return [item for item in ranked if item in ai or item in dev][:1]
+def _single_height(item: NewsItem, limit: int) -> float:
+    text = _mini_article(item.expanded_summary or item.summary, limit)
+    return 54 + 19.4 * _rows(len(item.title), 52) + 16.1 * -(-_rows(len(text), 48) // 2)
+
+
+def _lower_height(items: list[NewsItem], limit: int) -> float:
+    def card(item: NewsItem) -> float:
+        text = _mini_article(item.expanded_summary or item.summary, limit)
+        return 15 * _rows(len(item.title), 39) + 13.4 * _rows(len(text), 50)
+    return 48 + max(map(card, items)) if items else 0
+
+
+def _front_limits(
+    lead: NewsItem | None, singles: list[NewsItem], lower: list[NewsItem],
+) -> tuple[int, int, int]:
+    """Longueurs de texte (gros titre, articles developpes, blocs cote a cote) qui tiennent."""
+    limits = [SHEET_LONG_LIMIT, SHEET_LONG_LIMIT, 300]
+    floors = [240, 240, 140]
+
+    def height() -> float:
+        return (
+            (_lead_height(lead, limits[0]) if lead else 0)
+            + sum(_single_height(item, limits[1]) for item in singles)
+            + _lower_height(lower, limits[2]) + SHEET_BLOCK_GAPS
+        )
+
+    # On rogne petit a petit le texte le plus long, pour que tous raccourcissent ensemble.
+    while height() > SHEET_COLUMN_HEIGHT:
+        open_ = [index for index in (1, 0, 2) if limits[index] > floors[index]]
+        if not open_:
+            break
+        limits[max(open_, key=lambda index: limits[index] - floors[index])] -= 30
+    return limits[0], limits[1], limits[2]
 
 
 def _page_sheet_front(edition: MorningEdition) -> str:
     """Recto de l'edition une feuille, dispose comme la une classique :
     colonne de service a gauche, actualite a droite, bandeau en bas."""
-    lead, _, _ = _sheet_news(edition)
-    front = _sheet_front_news(edition)
-    second, more = front[:1], front[1:2]
-    watch = _sheet_front_watch(edition)
+    plan = plan_sheet(edition)
+    lead = plan.lead
+    second, more = plan.front_news[:1], plan.front_news[1:2]
+    watch = plan.watch_front
     left = "".join(filter(None, [
         weather_block(edition),
         _sheet_agenda(edition.agenda),
@@ -1317,13 +1255,16 @@ def _page_sheet_front(edition: MorningEdition) -> str:
         _sheet_markets(edition.markets),
     ]))
 
+    lower_items = [item for item in (more[0] if more else None, plan.market) if item]
+    lead_limit, single_limit, lower_limit = _front_limits(lead, [*second, *watch], lower_items)
+
     def single(title: str, items: list[NewsItem]) -> str:
         """Un seul article, developpe sur toute la largeur."""
         if not items:
             return ""
         return (
             f'<section class="sheet-single">{section_header(title)}'
-            f'{_sheet_card(items[0], SHEET_LONG_LIMIT)}</section>'
+            f'{_sheet_card(items[0], single_limit)}</section>'
         )
 
     right = ""
@@ -1332,17 +1273,16 @@ def _page_sheet_front(edition: MorningEdition) -> str:
         <article class="news-lead sheet-lead">
           <p class="article-meta">{_source_line(lead)}</p>
           <h2>{_e(lead.title)}</h2>
-          <p class="standfirst">{_e(_mini_article(lead.expanded_summary or lead.summary, SHEET_LONG_LIMIT))}</p>
+          <p class="standfirst">{_e(_mini_article(lead.expanded_summary or lead.summary, lead_limit))}</p>
         </article>
         """
     right += single("A retenir", second)
     # Deux blocs cote a cote, comme sur la une classique.
     lower = "".join(
-        f'<section>{section_header(title)}{_sheet_card(item, 300)}</section>'
+        f'<section>{section_header(title)}{_sheet_card(item, lower_limit)}</section>'
         for title, item in (
             ("A lire aussi", more[0] if more else None),
-            ("Bourse & crypto",
-             min(edition.market_news, key=_sheet_weight) if edition.market_news else None),
+            ("Bourse & crypto", plan.market),
         ) if item
     )
     if lower:
@@ -1364,19 +1304,32 @@ def _page_sheet_front(edition: MorningEdition) -> str:
     )
 
 
+SHEET_BACK_COLUMN_HEIGHT = 763   # hauteur d'une des trois colonnes du verso, en pixels CSS
+
+
+def _back_limit(items: list[NewsItem]) -> int:
+    """Longueur de texte qui laisse tenir tous les articles du verso sur trois colonnes."""
+    def fits(limit: int) -> bool:
+        columns, used = 1, 0.0
+        for item in items:
+            text = _mini_article(item.expanded_summary or item.summary, limit)
+            height = 35.2 + 16.72 * _rows(len(item.title), 29) + 15.31 * _rows(len(text), 41)
+            if used + height > SHEET_BACK_COLUMN_HEIGHT:
+                columns, used = columns + 1, 0.0
+            used += height + 13.6
+        return columns <= 3
+
+    return next((limit for limit in range(SHEET_BACK_LIMIT, 110, -30) if fits(limit)), 120)
+
+
 def _page_sheet_back(edition: MorningEdition, number: int) -> str:
     """Verso de l'edition une feuille : la suite des articles, sans titre de rubrique."""
-    _, news, culture = _sheet_news(edition)
-    shown_news = {item.title for item in _sheet_front_news(edition)}
-    rest = [item for item in news if item.title not in shown_news]
-    ai, dev = _sheet_watch(edition)
-    shown = {item.title for item in _sheet_front_watch(edition)}
-    ai = [item for item in ai if item.title not in shown]
-    dev = [item for item in dev if item.title not in shown]
+    plan = plan_sheet(edition)
     # Un seul flux sur trois colonnes : chaque colonne se remplit avant la suivante,
     # et seuls les derniers articles sautent si la page est pleine.
-    cards = "".join(
-        _sheet_item(item, limit=SHEET_BACK_LIMIT) for item in [*rest, *culture, *ai, *dev])
+    items = [*plan.back_news, *plan.culture, *plan.ai, *plan.dev]
+    limit = _back_limit(items)
+    cards = "".join(_sheet_item(item, limit=limit) for item in items)
     zones = cards or '<p class="empty-state">Aucun autre article ce matin.</p>'
     extras = _sheet_crossword(edition) + _sheet_forecast(edition)
     header = f"""
